@@ -2,7 +2,7 @@
 
 A enhanced derivative of the excellent [phpMiniAdmin](http://phpminiadmin.sourceforge.net/) project, designed to provide an even better database administration experience while maintaining the lightweight, single-file philosophy that makes phpMiniAdmin so great.
 
-![Screenshot](cap.png)
+![Logo](assets/logo.png)
 
 ## About This Project
 
