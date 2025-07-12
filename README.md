@@ -1,0 +1,96 @@
+# PHPMochiAdmin
+
+A enhanced derivative of the excellent [phpMiniAdmin](http://phpminiadmin.sourceforge.net/) project, designed to provide an even better database administration experience while maintaining the lightweight, single-file philosophy that makes phpMiniAdmin so great.
+
+![Screenshot](cap.png)
+
+## About This Project
+
+PHPMochiAdmin builds upon the solid foundation of phpMiniAdmin, created by [Oleg Savchuk](https://github.com/osalabs). We deeply appreciate the original work and continue to honor the same dual licensing (GPL v2 and MIT) that makes phpMiniAdmin accessible to everyone.
+
+### What Makes PHPMochiAdmin Special
+
+This project extends phpMiniAdmin with additional features and improvements while preserving the core principle of being a lightweight, standalone PHP script for quick and easy MySQL database access.
+
+## Installation
+
+1. Download the `phpmochiadmin.php` file
+2. Upload it to your web server's public directory
+3. Access it via your browser: `http://yoursite.com/phpmochiadmin.php`
+
+**Security Note:** Always set a strong password using the `$ACCESS_PWD` variable in the script for production use.
+
+## Dependencies
+
+- PHP with `mysqli` extension enabled
+- MySQL/MariaDB database server
+
+### Installing mysqli on different systems:
+- **Debian/Ubuntu**: `sudo apt-get install php-mysql`
+- **Windows**: Enable `extension=php_mysqli.dll` in php.ini
+
+## Configuration
+
+### Basic Configuration
+Edit the `phpmochiadmin.php` file and configure the database connection settings:
+
+```php
+$DBDEF=array(
+    'user'=>"your_username",
+    'pwd'=>"your_password", 
+    'db'=>"your_database",
+    'host'=>"localhost",
+    'chset'=>"utf8mb4"
+);
+```
+
+### External Config File (Recommended)
+Create a `phpminiconfig.php` file in the same directory with your settings. This allows you to upgrade PHPMochiAdmin without losing your configuration.
+
+Sample configurations for popular applications are available in the `samples/` directory:
+- WordPress (`phpminiconfig.wordpress.php`)
+- Magento (`phpminiconfig.magento.php`)
+- SugarCRM (`phpminiconfig.sugarcrm.php`)
+- Vtiger (`phpminiconfig.vtiger.php`)
+- TYPO3 (`phpminiconfig.typo3.php`)
+
+## Security Features
+
+- **Access Password Protection**: Set `$ACCESS_PWD` to protect your database from unauthorized access
+- **Local File Access Control**: `LOAD DATA LOCAL INFILE` is disabled by default to prevent data exfiltration
+- **SSL Support**: Configure SSL connections for secure database communication
+- **Multiple Server Support**: Manage multiple database servers with easy switching
+
+## Key Features
+
+- **Lightweight**: Single PHP file, no complex installation
+- **Multiple Database Servers**: Switch between different database connections
+- **Process List**: Quick access to "SHOW PROCESSLIST" 
+- **Enhanced Performance**: Optimized table status queries using `information_schema`
+- **Common Table Expressions**: Support for WITH clauses (CTEs)
+- **Modern PHP Support**: Compatible with PHP 8.3+
+- **Export/Import**: Multiple format support with server-side processing
+- **UTF8MB4**: Full Unicode support by default
+
+## Screenshots
+
+Additional screenshots available at the [original phpMiniAdmin project](https://sourceforge.net/projects/phpminiadmin/#screenshots).
+
+## Credits and License
+
+PHPMochiAdmin is a derivative work based on [phpMiniAdmin](http://phpminiadmin.sourceforge.net/) by Oleg Savchuk (osalabs@gmail.com).
+
+**Original phpMiniAdmin Credits:**
+- Author: [Oleg Savchuk](https://github.com/osalabs)
+- Website: [osalabs.com](http://osalabs.com)
+- Project: [phpMiniAdmin on SourceForge](http://phpminiadmin.sourceforge.net/)
+
+**License:** Dual licensed under GPL v2 and MIT licenses, same as the original phpMiniAdmin project. See [opensource.org/licenses](http://opensource.org/licenses/) for full license texts.
+
+## Contributing
+
+We welcome contributions that enhance the functionality while maintaining the lightweight philosophy of the original project. Please ensure all contributions respect the security-focused approach of phpMiniAdmin.
+
+## Support
+
+For issues related to the core phpMiniAdmin functionality, please refer to the [original project](https://github.com/osalabs/phpminiadmin). For PHPMochiAdmin-specific enhancements, please use this project's issue tracker.
