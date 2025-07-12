@@ -61,21 +61,6 @@ Sample configurations for popular applications are available in the `samples/` d
 - **SSL Support**: Configure SSL connections for secure database communication
 - **Multiple Server Support**: Manage multiple database servers with easy switching
 
-## Key Features
-
-- **Lightweight**: Single PHP file, no complex installation
-- **Multiple Database Servers**: Switch between different database connections
-- **Process List**: Quick access to "SHOW PROCESSLIST" 
-- **Enhanced Performance**: Optimized table status queries using `information_schema`
-- **Common Table Expressions**: Support for WITH clauses (CTEs)
-- **Modern PHP Support**: Compatible with PHP 8.3+
-- **Export/Import**: Multiple format support with server-side processing
-- **UTF8MB4**: Full Unicode support by default
-
-## Screenshots
-
-Additional screenshots available at the [original phpMiniAdmin project](https://sourceforge.net/projects/phpminiadmin/#screenshots).
-
 ## Credits and License
 
 PHPMochiAdmin is a derivative work based on [phpMiniAdmin](http://phpminiadmin.sourceforge.net/) by Oleg Savchuk (osalabs@gmail.com).
@@ -89,8 +74,8 @@ PHPMochiAdmin is a derivative work based on [phpMiniAdmin](http://phpminiadmin.s
 
 ## Contributing
 
-We welcome contributions that enhance the functionality while maintaining the lightweight philosophy of the original project. Please ensure all contributions respect the security-focused approach of phpMiniAdmin.
+We welcome contributions that enhance the functionality while maintaining the lightweight philosophy of the original project. 
 
 ## Support
 
-For issues related to the core phpMiniAdmin functionality, please refer to the [original project](https://github.com/osalabs/phpminiadmin). For PHPMochiAdmin-specific enhancements, please use this project's issue tracker.
+For PHPMochiAdmin-specific enhancements, please use this project's issue tracker.

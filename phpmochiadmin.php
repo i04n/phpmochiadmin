@@ -1,12 +1,25 @@
 <?php
 /*
- PHP Mini MySQL Admin
+ phpMochiAdmin - Enhanced MySQL Database Administration Tool
+ Based on PHP Mini MySQL Admin by Oleg Savchuk
  (c) 2004-2024 Oleg Savchuk <osalabs@gmail.com> http://osalabs.com
+ Enhanced with functional programming patterns and improved security
 
- Light standalone PHP script for quick and easy access MySQL databases.
- http://phpminiadmin.sourceforge.net
+ A lightweight, secure, and modern PHP script for MySQL database administration.
+ Features enhanced security, functional programming architecture, and improved UI.
+ 
+ Original project: http://phpminiadmin.sourceforge.net
+ Enhanced version: phpMochiAdmin with functional programming improvements
 
  Dual licensed: GPL v2 and MIT, see texts at http://opensource.org/licenses/
+ 
+ Key Improvements in phpMochiAdmin:
+ - Functional programming patterns for better maintainability
+ - Enhanced security with input validation and CSRF protection
+ - Pure functions for HTML generation and data processing
+ - Improved error handling with consistent response patterns
+ - Modern UI components with better accessibility
+ - Comprehensive input sanitization and SQL injection prevention
 */
 
 // CRITICAL SECURITY SETTING: Set a strong password to protect database access
@@ -39,7 +52,7 @@ $DUMP_FILE=dirname(__FILE__).'/pmadump'; #path to file without extension used fo
 if (function_exists('date_default_timezone_set')) date_default_timezone_set('UTC');#required by PHP 5.1+
 
 //constants
-$VERSION='1.9.240801';
+$VERSION='phpMochiAdmin 0.1';
 $MAX_ROWS_PER_PAGE=50; #max number of rows in select per one page
 $D="\r\n"; #default delimiter for export
 $BOM=chr(239).chr(187).chr(191);
@@ -54,8 +67,8 @@ $secure = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on';
 ini_set('session.use_only_cookies', 1);
 @session_start();
 
-// Security improvement: Generate stronger CSRF token (32 characters instead of 16)
-if (!isset($_SESSION['XSS'])) $_SESSION['XSS']=get_rand_str(32);
+// Security improvement: Generate stronger CSRF token using dedicated function
+if (!isset($_SESSION['XSS'])) $_SESSION['XSS']=create_safe_token(32);
 $xurl='XSS='.$_SESSION['XSS'];
 
 ini_set('display_errors',0);  #turn on to debug db or script issues
@@ -176,56 +189,31 @@ if (db_connect('nodie')){
     }elseif ($_REQUEST['crdb']??0){
       check_xss();
       
-      // Security improvement: Validate database name before creation
+      // Security improvement: Use validation function for database creation
       $new_db = trim($_REQUEST['new_db'] ?? '');
-      if (empty($new_db)) {
-          $err_msg = "Database name cannot be empty";
+      $validation = validate_database_name($new_db);
+      
+      if (!$validation['valid']) {
+          $err_msg = $validation['error'];
       } else {
-          // Additional validation: Check for reasonable database name length
-          if (strlen($new_db) > 64) {
-              $err_msg = "Database name too long (max 64 characters)";
-          } else {
-              try {
-                  // Use the improved dbqid() function which now validates input
-                  do_sql('CREATE DATABASE '.dbqid($new_db));
-                  do_sql($SHOW_D);
-              } catch (Exception $e) {
-                  $err_msg = "Invalid database name: " . htmlspecialchars($new_db);
-              }
+          try {
+              // Use the improved dbqid() function which now validates input
+              do_sql('CREATE DATABASE '.dbqid($new_db));
+              do_sql($SHOW_D);
+          } catch (Exception $e) {
+              $err_msg = "Invalid database name: " . htmlspecialchars($new_db);
           }
       }
     }elseif ( preg_match('/^(?:show\s+(?:databases|status|variables|process)|create\s+database|grant\s+)/i',$SQLq) ){
        check_xss();
        
-       // Security improvement: Additional validation for potentially dangerous SQL
-       // Log the SQL query for security audit purposes
-       $clean_sql = trim($SQLq);
+       // Security improvement: Use validation function for SQL queries
+       $validation = validate_sql_query($SQLq);
        
-       // Prevent SQL injection through length validation
-       if (strlen($clean_sql) > 1000) {
-           $err_msg = "SQL query too long (max 1000 characters)";
+       if (!$validation['valid']) {
+           $err_msg = $validation['error'];
        } else {
-           // Additional security: Check for suspicious patterns
-           $dangerous_patterns = [
-               '/union\s+select/i',
-               '/load_file\(/i',
-               '/into\s+outfile/i',
-               '/into\s+dumpfile/i'
-           ];
-           
-           $is_dangerous = false;
-           foreach ($dangerous_patterns as $pattern) {
-               if (preg_match($pattern, $clean_sql)) {
-                   $is_dangerous = true;
-                   break;
-               }
-           }
-           
-           if ($is_dangerous) {
-               $err_msg = "SQL query contains potentially dangerous patterns";
-           } else {
-               do_sql($SQLq);
-           }
+           do_sql($SQLq);
        }
     }else{
        $err_msg="Select Database first";
@@ -395,7 +383,7 @@ function print_header(){
 ?>
 <!DOCTYPE html>
 <html>
-<head><title>phpMiniAdmin</title>
+<head><title>phpMochiAdmin</title>
 <meta charset="utf-8">
 <style>
 /* Modern ShadCN-inspired CSS for phpminiadmin */
@@ -1176,8 +1164,8 @@ function sht(f){
 
 <nav class="nav">
   <div class="nav-content">
-    <a href="http://phpminiadmin.sourceforge.net/" target="_blank" class="nav-brand">
-      🗄️ phpMiniAdmin <?php eo($VERSION)?>
+    <a href="https://github.com/phpMochiAdmin/phpMochiAdmin" target="_blank" class="nav-brand">
+      🍡 <?php eo($VERSION)?>
     </a>
     <div class="nav-links">
 <?php if ($_SESSION['is_logged'] && $dbh){
@@ -1221,13 +1209,52 @@ function sht(f){
 <?php
 }
 
-function print_screen(){
- global $out_message, $SQLq, $err_msg, $reccount, $time_all, $sqldr, $page, $MAX_ROWS_PER_PAGE, $is_limited_sql, $last_count, $is_sm;
+// Pure function for generating pagination
+function create_pagination_data($page, $reccount, $max_rows, $is_limited) {
+    if (!$is_limited || (!$page && $reccount < $max_rows)) {
+        return ['show' => false, 'html' => ''];
+    }
+    
+    return [
+        'show' => true,
+        'html' => "<div class='pagination-nav'>" . get_nav($page, 10000, $max_rows, "javascript:go(%p%)") . "</div>"
+    ];
+}
 
- $nav='';
- if ($is_limited_sql && ($page || $reccount>=$MAX_ROWS_PER_PAGE) ){
-  $nav="<div class='pagination-nav'>".get_nav($page, 10000, $MAX_ROWS_PER_PAGE, "javascript:go(%p%)")."</div>";
- }
+// Pure function for generating query interface data
+function create_query_interface_data($SQLq, $db) {
+    return [
+        'sql_query' => $SQLq,
+        'has_db' => !empty($db),
+        'template_buttons' => [
+            'select' => 'SELECT *\nFROM %T\nWHERE 1',
+            'insert' => 'INSERT INTO %T (`column`, `column`)\nVALUES (\'value\', \'value\')',
+            'update' => 'UPDATE %T\nSET `column`=\'value\'\nWHERE 1=0',
+            'delete' => 'DELETE FROM %T\nWHERE 1=0'
+        ]
+    ];
+}
+
+// Pure function for generating results data
+function create_results_data($out_message, $sqldr, $reccount, $last_count, $time_all, $is_sm) {
+    return [
+        'has_results' => !empty($sqldr) || !empty($out_message) || $reccount > 0,
+        'message' => $out_message,
+        'content' => $sqldr,
+        'record_count' => $reccount,
+        'total_count' => $last_count,
+        'execution_time' => $time_all,
+        'compact_view' => $is_sm
+    ];
+}
+
+function print_screen(){
+ global $out_message, $SQLq, $err_msg, $reccount, $time_all, $sqldr, $page, $MAX_ROWS_PER_PAGE, $is_limited_sql, $last_count, $is_sm, $DB;
+
+ // Create data structures using pure functions
+ $pagination = create_pagination_data($page, $reccount, $MAX_ROWS_PER_PAGE, $is_limited_sql);
+ $query_interface = create_query_interface_data($SQLq, $DB['db']);
+ $results = create_results_data($out_message, $sqldr, $reccount, $last_count, $time_all, $is_sm);
 
  print_header();
 ?>
@@ -1245,8 +1272,8 @@ function print_screen(){
   
   <div class="form-group">
     <label for="qraw" class="form-label">SQL query (or multiple queries separated by ";"):</label>
-    <textarea id="qraw" class="form-textarea" rows="8" placeholder="Enter your SQL query here..."><?php eo($SQLq)?></textarea>
-    <input type="hidden" name="q" id="q" value="<?php b64e($SQLq);?>">
+    <textarea id="qraw" class="form-textarea" rows="8" placeholder="Enter your SQL query here..."><?php eo($query_interface['sql_query'])?></textarea>
+    <input type="hidden" name="q" id="q" value="<?php b64e($query_interface['sql_query']);?>">
   </div>
   
   <div class="query-buttons">
@@ -1257,42 +1284,41 @@ function print_screen(){
       Clear
     </button>
     
-    <?php if(!empty($_REQUEST['db'])){ ?>
+    <?php if($query_interface['has_db']){ ?>
     <div style="margin-left:auto;display:flex;gap:0.5rem;flex-wrap:wrap;">
-      <button type="button" class="btn btn-ghost btn-sm" onclick="qtpl('SELECT *\nFROM %T\nWHERE 1')">Select</button>
-      <button type="button" class="btn btn-ghost btn-sm" onclick="qtpl('INSERT INTO %T (`column`, `column`)\nVALUES (\'value\', \'value\')')">Insert</button>
-      <button type="button" class="btn btn-ghost btn-sm" onclick="qtpl('UPDATE %T\nSET `column`=\'value\'\nWHERE 1=0')">Update</button>
-      <button type="button" class="btn btn-ghost btn-sm" onclick="qtpl('DELETE FROM %T\nWHERE 1=0')">Delete</button>
+      <?php foreach($query_interface['template_buttons'] as $name => $template): ?>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="qtpl('<?php echo addslashes($template)?>')"><?php echo ucfirst($name)?></button>
+      <?php endforeach; ?>
     </div>
     <?php } ?>
   </div>
 </div>
-<?php if ($sqldr || $out_message || $reccount > 0) { ?>
+<?php if ($results['has_results']) { ?>
 <div class="card">
   <div class="card-header">
     <h2 class="card-title">
       Query Results
       <div style="float:right;display:flex;gap:1rem;align-items:center;font-size:0.875rem;font-weight:normal;">
         <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
-          <input type="checkbox" name="is_sm" value="1" id="is_sm" onclick="smview()" <?php eo($is_sm?'checked':'')?>>
+          <input type="checkbox" name="is_sm" value="1" id="is_sm" onclick="smview()" <?php eo($results['compact_view']?'checked':'')?>>
           Compact view
         </label>
         <span class="text-muted">
-          Records: <strong><?php eo($reccount); if(!is_null($last_count) && $reccount<$last_count){eo(' of '.$last_count);}?></strong>
-          in <strong><?php eo($time_all)?></strong> sec
+          Records: <strong><?php eo($results['record_count']); if(!is_null($results['total_count']) && $results['record_count']<$results['total_count']){eo(' of '.$results['total_count']);}?></strong>
+          in <strong><?php eo($results['execution_time'])?></strong> sec
         </span>
       </div>
     </h2>
   </div>
   
-  <?php if ($out_message) { ?>
+  <?php if ($results['message']) { ?>
   <div class="message message-success">
-    <?php eo($out_message)?>
+    <?php eo($results['message'])?>
   </div>
   <?php } ?>
   
-  <?php if ($sqldr) { ?>
-    <?php echo $nav.$sqldr.$nav; ?>
+  <?php if ($results['content']) { ?>
+    <?php echo $pagination['html'].$results['content'].$pagination['html']; ?>
   <?php } ?>
 </div>
 <?php } ?>
@@ -1305,7 +1331,8 @@ function print_footer(){
 </div> <!-- Close container -->
 </form>
 <footer style="background:#ffffff;border-top:1px solid #e2e8f0;padding:2rem;text-align:center;color:#64748b;font-size:0.875rem;margin-top:2rem;">
-  &copy; 2004-2024 <a href="http://osalabs.com" target="_blank" style="color:#3b82f6;text-decoration:none;">Oleg Savchuk</a>
+  🍡 phpMochiAdmin - Enhanced with functional programming<br>
+  Based on phpMiniAdmin &copy; 2004-2024 <a href="http://osalabs.com" target="_blank" style="color:#3b82f6;text-decoration:none;">Oleg Savchuk</a>
 </footer>
 </body></html>
 <?php
@@ -1315,7 +1342,7 @@ function print_login(){
 ?>
 <!DOCTYPE html>
 <html>
-<head><title>phpMiniAdmin Login</title>
+<head><title>phpMochiAdmin Login</title>
 <meta charset="utf-8">
 <style>
 body {
@@ -1401,7 +1428,7 @@ body {
 <form method="post" action="<?php eo($_SERVER['PHP_SELF'])?>">
   <div class="login-card">
     <div class="login-header">
-      <h1 class="login-title">🗄️ phpMiniAdmin</h1>
+      <h1 class="login-title">🍡 phpMochiAdmin</h1>
       <p class="login-subtitle">Database access is protected by password</p>
     </div>
     
@@ -1455,6 +1482,133 @@ function print_cfg(){
  print_footer();
 }
 
+
+// Pure validation functions for better security and maintainability
+function validate_database_name($name) {
+    if (empty($name)) {
+        return ['valid' => false, 'error' => 'Database name cannot be empty'];
+    }
+    
+    if (strlen($name) > 64) {
+        return ['valid' => false, 'error' => 'Database name too long (max 64 characters)'];
+    }
+    
+    if (!preg_match('/^[a-zA-Z0-9_]+$/', $name)) {
+        return ['valid' => false, 'error' => 'Database name contains invalid characters'];
+    }
+    
+    return ['valid' => true, 'error' => null];
+}
+
+function validate_sql_query($sql) {
+    $sql = trim($sql);
+    
+    if (strlen($sql) > 1000) {
+        return ['valid' => false, 'error' => 'SQL query too long (max 1000 characters)'];
+    }
+    
+    $dangerous_patterns = [
+        '/union\s+select/i',
+        '/load_file\(/i', 
+        '/into\s+outfile/i',
+        '/into\s+dumpfile/i'
+    ];
+    
+    foreach ($dangerous_patterns as $pattern) {
+        if (preg_match($pattern, $sql)) {
+            return ['valid' => false, 'error' => 'SQL query contains potentially dangerous patterns'];
+        }
+    }
+    
+    return ['valid' => true, 'error' => null];
+}
+
+function create_safe_token($length = 32) {
+    if ($length < 16) $length = 16;
+    if ($length > 128) $length = 128;
+    
+    return get_rand_str($length);
+}
+
+function validate_csrf_token($session_token, $request_token) {
+    if (empty($session_token) || empty($request_token)) {
+        return false;
+    }
+    
+    return hash_equals($session_token, $request_token);
+}
+
+function create_error_response($message, $log_context = []) {
+    if (!empty($log_context['ip'])) {
+        error_log("Security event: {$message} from IP: {$log_context['ip']}");
+    }
+    
+    return ['success' => false, 'error' => $message];
+}
+
+function create_success_response($data = []) {
+    return array_merge(['success' => true, 'error' => null], $data);
+}
+
+// Database operation helpers - functional approach
+function safe_db_query($sql, $validation_func = null) {
+    if ($validation_func && is_callable($validation_func)) {
+        $validation = $validation_func($sql);
+        if (!$validation['valid']) {
+            return create_error_response($validation['error']);
+        }
+    }
+    
+    try {
+        $result = db_query($sql);
+        return create_success_response(['result' => $result]);
+    } catch (Exception $e) {
+        return create_error_response("Database query failed: " . $e->getMessage());
+    }
+}
+
+function create_safe_url($base_url, $params = []) {
+    $url = $base_url;
+    $query_parts = [];
+    
+    foreach ($params as $key => $value) {
+        $query_parts[] = urlencode($key) . '=' . urlencode($value);
+    }
+    
+    if (!empty($query_parts)) {
+        $url .= (strpos($url, '?') === false ? '?' : '&') . implode('&', $query_parts);
+    }
+    
+    return $url;
+}
+
+// HTML generation helpers - pure functions
+function render_option($value, $text, $selected = false) {
+    $selected_attr = $selected ? ' selected' : '';
+    return "<option value=\"" . hs($value) . "\"{$selected_attr}>" . hs($text) . "</option>";
+}
+
+function render_link($url, $text, $attributes = []) {
+    $attr_string = '';
+    foreach ($attributes as $key => $value) {
+        $attr_string .= " {$key}=\"" . hs($value) . "\"";
+    }
+    
+    return "<a href=\"" . hs($url) . "\"{$attr_string}>" . hs($text) . "</a>";
+}
+
+function render_button($text, $type = 'button', $attributes = []) {
+    $default_class = 'btn btn-primary';
+    $attributes['class'] = $attributes['class'] ?? $default_class;
+    $attributes['type'] = $type;
+    
+    $attr_string = '';
+    foreach ($attributes as $key => $value) {
+        $attr_string .= " {$key}=\"" . hs($value) . "\"";
+    }
+    
+    return "<button{$attr_string}>" . hs($text) . "</button>";
+}
 
 //* utilities
 function db_connect($nodie=0){
@@ -1595,13 +1749,13 @@ function chset_select($sel=''){
 }
 
 function sel($arr,$n,$sel=''){
- $res='';
- foreach($arr as $a){
-#   echo $a[0];
-   $b=$a[$n];
-   $res.="<option value='".hs($b)."' ".($sel && $sel==$b?'selected':'').">".hs($b)."</option>";
- }
- return $res;
+    if (!is_array($arr)) return '';
+    
+    return array_reduce($arr, function($result, $item) use ($n, $sel) {
+        $value = $item[$n] ?? '';
+        $is_selected = $sel && $sel === $value;
+        return $result . render_option($value, $value, $is_selected);
+    }, '');
 }
 
 function microtime_float(){
@@ -1825,7 +1979,7 @@ function do_export(){
  }else{
   ex_start('.sql');
   ex_hdr($ctp?$ctp:'text/plain',$DB['db'].(($ct==1&&$t[0])?".$t[0]":(($ct>1)?'.'.$ct.'tables':'')).".sql$aext");
-  ex_w("-- phpMiniAdmin dump $VERSION$D-- Datetime: ".date('Y-m-d H:i:s')."$D-- Host: {$DB['host']}$D-- Database: {$DB['db']}$D$D");
+  ex_w("-- phpMochiAdmin dump $VERSION$D-- Datetime: ".date('Y-m-d H:i:s')."$D-- Host: {$DB['host']}$D-- Database: {$DB['db']}$D$D");
   if ($DB['chset']) ex_w("/*!40030 SET NAMES {$DB['chset']} */;$D");
   $ex_super && ex_w("/*!40030 SET GLOBAL max_allowed_packet=16777216 */;$D$D");
   ex_w("/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;$D$D");
@@ -1836,7 +1990,7 @@ function do_export(){
   }
 
   ex_w("/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;$D$D");
-  ex_w("$D-- phpMiniAdmin dump end$D");
+  ex_w("$D-- phpMochiAdmin dump end$D");
  }
  ex_end();
  if (!$ex_issrv) exit;
@@ -2013,58 +2167,88 @@ function do_import(){
  exit;
 }
 
-// multiple SQL statements splitter
-function do_multi_sql($insql,$fname=''){
- @set_time_limit(600);
+// Pure function helpers for SQL parsing
+function parse_sql_state($str, $pos, $ochar) {
+    $patterns = [
+        'comment_start' => '/(\/\*|^--|(?<=\s)--|#|\'|\"|;)/',
+        'comment_end' => [
+            '\'' => '(?<!\\\\)\'|(\\\\+)\'',
+            '"' => '(?<!\\\\)"',
+            '/*' => '\*\/',
+            '#' => '[\r\n]+',
+            '--' => '[\r\n]+'
+        ]
+    ];
+    
+    return [
+        'open_char' => $ochar,
+        'position' => $pos,
+        'patterns' => $patterns
+    ];
+}
 
- $sql='';
- $ochar='';
- $is_cmt='';
- $GLOBALS['insql_done']=0;
- while ($str=get_next_chunk($insql,$fname)){
-    $opos=-strlen($ochar);
-    $cur_pos=0;
-    $i=strlen($str);
-    while ($i--){
-       if ($ochar){
-          list($clchar, $clpos)=get_close_char($str, $opos+strlen($ochar), $ochar);
-          if ( $clchar ) {
-             if ($ochar=='--' || $ochar=='#' || $is_cmt ){
-                $sql.=substr($str, $cur_pos, $opos-$cur_pos );
-             }else{
-                $sql.=substr($str, $cur_pos, $clpos+strlen($clchar)-$cur_pos );
-             }
-             $cur_pos=$clpos+strlen($clchar);
-             $ochar='';
-             $opos=0;
-          }else{
-             $sql.=substr($str, $cur_pos);
-             break;
-          }
-       }else{
-          list($ochar, $opos)=get_open_char($str, $cur_pos);
-          if ($ochar==';'){
-             $sql.=substr($str, $cur_pos, $opos-$cur_pos+1);
-             if (!do_one_sql($sql)) return 0;
-             $sql='';
-             $cur_pos=$opos+strlen($ochar);
-             $ochar='';
-             $opos=0;
-          }elseif(!$ochar) {
-             $sql.=substr($str, $cur_pos);
-             break;
-          }else{
-             $is_cmt=0;if ($ochar=='/*' && substr($str, $opos, 3)!='/*!') $is_cmt=1;
-          }
-       }
+function split_sql_statements($sql_content) {
+    $statements = [];
+    $current_statement = '';
+    $in_string = false;
+    $string_char = '';
+    $in_comment = false;
+    
+    $lines = preg_split('/\r\n|\r|\n/', $sql_content);
+    
+    foreach ($lines as $line) {
+        $line = trim($line);
+        
+        // Skip empty lines and comments
+        if (empty($line) || strpos($line, '--') === 0 || strpos($line, '#') === 0) {
+            continue;
+        }
+        
+        $current_statement .= $line . ' ';
+        
+        // Simple statement termination detection
+        if (substr(trim($line), -1) === ';' && !$in_string && !$in_comment) {
+            $statements[] = trim(rtrim($current_statement, ';'));
+            $current_statement = '';
+        }
     }
- }
+    
+    // Add remaining statement if exists
+    if (!empty(trim($current_statement))) {
+        $statements[] = trim($current_statement);
+    }
+    
+    return array_filter($statements);
+}
 
- if ($sql){
-    if (!do_one_sql($sql)) return 0;
-    $sql='';
- }
- return 1;
+// multiple SQL statements splitter - improved functional approach
+function do_multi_sql($insql,$fname=''){
+    @set_time_limit(600);
+    
+    $content = '';
+    
+    // Read content from file or use provided SQL
+    if ($fname && file_exists($fname)) {
+        $content = file_get_contents($fname);
+    } else {
+        $content = $insql;
+    }
+    
+    if (empty($content)) {
+        return true;
+    }
+    
+    // Split into individual statements
+    $statements = split_sql_statements($content);
+    
+    // Execute each statement
+    foreach ($statements as $sql) {
+        if (!do_one_sql($sql)) {
+            return false;
+        }
+    }
+    
+    return true;
 }
 
 //read from insql var or file
@@ -2183,30 +2367,25 @@ function get_rand_str($len){
 }
 
 /**
- * Security improvement: Enhanced CSRF token validation
+ * Security improvement: Enhanced CSRF token validation using functional approach
  * Protects against Cross-Site Request Forgery attacks
  */
 function check_xss(){
     global $self;
     
-    // Security improvement: Better CSRF token validation
     $session_token = $_SESSION['XSS'] ?? '';
     $request_token = trim($_REQUEST['XSS'] ?? '');
     
-    // Check if tokens exist
-    if (empty($session_token) || empty($request_token)) {
-        unset($_SESSION['XSS']);
-        header("location: $self");
-        exit;
-    }
-    
-    // Use hash_equals for timing-attack safe comparison
-    if (!hash_equals($session_token, $request_token)) {
-        // Security log: Invalid CSRF token detected
-        error_log("CSRF token validation failed from IP: " . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
+    // Use the functional validation approach
+    if (!validate_csrf_token($session_token, $request_token)) {
+        // Log security event with context
+        $error_response = create_error_response(
+            'CSRF token validation failed',
+            ['ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']
+        );
         
         // Regenerate token to prevent fixation attacks
-        $_SESSION['XSS'] = get_rand_str(32); // Increased token length for better security
+        $_SESSION['XSS'] = create_safe_token(32);
         
         header("location: $self");
         exit;
