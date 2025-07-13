@@ -212,121 +212,138 @@ and TABLE_SCHEMA=".dbq($DB['db']);
  }
 }
 
-function display_select($sth,$q){
- global $dbh,$SRV,$DB,$sqldr,$reccount,$is_sht,$xurl,$is_sm;
- $rc=["o","e"];
- $srvn=ue($SRV);
- $dbn=ue($DB['db']);
- $sqldr='';
+// Functional refactored display_select - clean and maintainable!
+function display_select($sth, $q) {
+    global $dbh, $SRV, $DB, $sqldr, $reccount, $is_sht, $xurl, $is_sm;
+    
+    // Early return for invalid results
+    if ($sth === FALSE || $sth === TRUE) return;
+    
+    // Extract data from result set
+    $reccount = mysqli_num_rows($sth);
+    $fields_num = mysqli_field_count($dbh);
+    
+    // Detect query type using pure function
+    $query_type = detect_query_type($q);
+    $is_sht = $query_type['is_show_tables']; // Update global for compatibility
+    
+    // Create configuration object
+    $config = [
+        'xurl' => $xurl,
+        'db' => ue($DB['db']),
+        'srv' => ue($SRV),
+        'is_sm' => $is_sm
+    ];
+    
+    // Get field names
+    $field_names = [];
+    mysqli_field_seek($sth, 0);
+    for ($i = 0; $i < $fields_num; $i++) {
+        $meta = mysqli_fetch_field($sth);
+        $field_names[] = $meta->name;
+    }
+    
+    // Build HTML using pure functions
+    $sqldr = '';
+    
+    // Add info card for special query types
+    $sqldr .= create_info_card($query_type, $config);
+    
+    // Add table actions section if needed
+    $table_actions = create_table_actions_section($query_type);
+    $sqldr .= $table_actions;
+    
+    // Determine table classes
+    $table_classes = 'res';
+    if ($config['is_sm']) $table_classes .= ' sm';
+    if ($query_type['is_show_tables'] || $query_type['is_show_databases']) $table_classes .= ' wa';
+    
+    // Start table
+    $sqldr .= "<div><table id='res' class='{$table_classes}'>";
+    
+    // Add headers
+    $sqldr .= create_table_headers($query_type, $field_names);
+    
+    // Add rows
+    $sqldr .= render_table_rows($sth, $query_type, $config, $field_names, $fields_num);
+    
+    // Close table
+    $sqldr .= "</table>";
+    
+    // Close action containers if needed
+    if ($query_type['is_show_tables']) {
+        $sqldr .= "</div></div>"; // Close table-container-inner and table-actions
+    }
+    
+    $sqldr .= "</div>\n";
+}
 
- $is_shd=(preg_match('/^show\s+databases/i',$q));
- $is_sht=(preg_match('/^show\s+tables|^SHOW\s+TABLE\s+STATUS/',$q));
- $is_show_crt=(preg_match('/^show\s+create\s+table/i',$q));
+function render_table_rows($sth, $query_type, $config, $field_names, $fields_num) {
+    $html = '';
+    $row_classes = ["o", "e"];
+    $row_toggle = false;
+    
+    mysqli_data_seek($sth, 0); // Reset result pointer
+    
+    while ($row = mysqli_fetch_row($sth)) {
+        $row_class = $row_classes[$row_toggle = !$row_toggle];
+        $html .= "<tr class='{$row_class}' onclick='tc(this)'>";
+        
+        if ($query_type['is_show_tables']) {
+            $html .= render_show_tables_row($row, $config, $fields_num);
+        } elseif ($query_type['is_show_databases']) {
+            $html .= render_show_databases_row($row, $config);
+        } else {
+            $html .= render_regular_row($row, $fields_num, $query_type['is_show_create']);
+        }
+        
+        $html .= "</tr>\n";
+    }
+    
+    return $html;
+}
 
- if ($sth===FALSE or $sth===TRUE) return;#check if $sth is not a mysql resource
+function render_show_tables_row($row, $config, $fields_num) {
+    $table_name = $row[0];
+    $table_quoted = dbqid($table_name);
+    $url = "?{$config['xurl']}&db={$config['db']}&srv={$config['srv']}&t=" . b64u($table_name);
+    
+    $html = "<td><input type='checkbox' name='cb[]' value=\"" . hs($table_quoted) . "\"></td>";
+    $html .= "<td><a href=\"{$url}&q=" . b64u("select * from {$table_quoted}") . "\">" . hs($table_name) . "</a></td>";
+    $html .= "<td>" . hs($row[1]) . "</td>"; // Engine
+    $html .= "<td align='right'>" . hs($row[4]) . "</td>"; // Rows
+    $html .= "<td align='right'>" . hs($row[6]) . "</td>"; // Data size
+    $html .= "<td align='right'>" . hs($row[8]) . "</td>"; // Index size
+    $html .= "<td>" . render_table_row_actions($url, $table_name, $table_quoted) . "</td>";
+    $html .= "<td>" . hs($row[$fields_num - 1]) . "</td>"; // Comment
+    
+    return $html;
+}
 
- $reccount=mysqli_num_rows($sth);
- $fields_num=mysqli_field_count($dbh);
+function render_show_databases_row($row, $config) {
+    $db_name = $row[0];
+    $db_quoted = dbqid($db_name);
+    $url = "?{$config['xurl']}&db=" . ue($db_name) . "&srv={$config['srv']}";
+    
+    $html = "<td><a href=\"{$url}&q=" . b64u("SHOW TABLE STATUS") . "\">" . hs($db_name) . "</a></td>";
+    
+    $actions = render_database_row_actions($url, $db_name, $db_quoted);
+    foreach ($actions as $action) {
+        $html .= "<td>{$action}</td>";
+    }
+    
+    return $html;
+}
 
- $w='';
- if ($is_sm) $w='sm ';
- if ($is_sht || $is_shd) {$w='wa';
-   $url='?'.$xurl."&db=$dbn&srv=$srvn";
-   $sqldr.="<div class='server-info-card'>
-   <h3 class='server-info-title'>🖥️ MySQL Server</h3>
-   <div class='server-info-links'>
-     <a href='$url&q=".b64u("show variables")."' class='server-link'>⚙️ Configuration Variables</a>
-     <a href='$url&q=".b64u("show status")."' class='server-link'>📊 Statistics</a>
-     <a href='$url&q=".b64u("show processlist")."' class='server-link'>⚡ Process List</a>
-   </div>";
-   if ($is_shd) $sqldr.="<div style='margin:1rem 0;display:flex;gap:0.5rem;align-items:center;'><label style='display:flex;gap:0.5rem;align-items:center;color:var(--muted);font-size:0.875rem;'>Create new database: <input type='text' name='new_db' placeholder='database name' class='form-input' style='width:200px;'></label> <button type='submit' name='crdb' class='btn btn-primary btn-sm'>✨ Create</button></div>";
-   if ($is_sht) $sqldr.="<div class='database-info'><span class='database-label'>Database:</span> <a href='$url&q=".b64u("show table status")."' class='server-link'>📋 Table Status</a></div>";
-   $sqldr.="</div>";
- }
- $abtn='';
- if ($is_sht){
-   $abtn="</div><div class='table-actions'>
-     <div class='table-actions-content'>
-       <div class='table-actions-buttons'>
-         <button type='submit' class='btn btn-primary btn-sm' onclick=\"sht('exp')\">
-           📊 Export
-         </button>
-         <button type='submit' class='btn btn-error btn-sm' onclick=\"if(ays()){sht('drop')}else{return false}\">
-           🗑️ Drop
-         </button>
-         <button type='submit' class='btn btn-warning btn-sm' onclick=\"if(ays()){sht('trunc')}else{return false}\">
-           ✂️ Truncate
-         </button>
-         <button type='submit' class='btn btn-success btn-sm' onclick=\"sht('opt')\">
-           ⚡ Optimize
-         </button>
-       </div>
-       <span class='table-actions-label'><strong>selected tables</strong></span>
-     </div>
-   <div class='table-container-inner'>";
-   $sqldr.=$abtn."<input type='hidden' name='dosht' value=''>";
- }
-
- $sqldr.="<div><table id='res' class='res $w'>";
- $headers="<tr class='h'>";
- if ($is_sht) $headers.="<td><input type='checkbox' name='cball' value='' onclick='chkall(this)'></td>";
- for($i=0;$i<$fields_num;$i++){
-    if ($is_sht && $i>0) break;
-    $meta=mysqli_fetch_field($sth);
-    $headers.="<th><div>".hs($meta->name)."</div></th>";
- }
- if ($is_shd) $headers.="<th>show create database</th><th>show table status</th><th>show triggers</th>";
- if ($is_sht) $headers.="<th>engine</th><th>~rows</th><th>data size</th><th>index size</th><th>show create table</th><th>explain</th><th>indexes</th><th>export</th><th>drop</th><th>truncate</th><th>optimize</th><th>repair</th><th>comment</th>";
- $headers.="</tr>\n";
- $sqldr.=$headers;
- $swp=false;
- while($row=mysqli_fetch_row($sth)){
-   $sqldr.="<tr class='".$rc[$swp=!$swp]."' onclick='tc(this)'>";
-   $v=$row[0];
-   if ($is_sht){
-     $vq=dbqid($v);
-     $url='?'.$xurl."&db=$dbn&srv=$srvn&t=".b64u($v);
-     $sqldr.="<td><input type='checkbox' name='cb[]' value=\"".hs($vq)."\"></td>"
-     ."<td><a href=\"$url&q=".b64u("select * from $vq")."\">".hs($v)."</a></td>"
-     ."<td>".hs($row[1])."</td>"
-     ."<td align='right'>".hs($row[4])."</td>"
-     ."<td align='right'>".hs($row[6])."</td>"
-     ."<td align='right'>".hs($row[8])."</td>"
-     ."<td>&#183;<a href=\"$url&q=".b64u("show create table $vq")."\">sct</a></td>"
-     ."<td>&#183;<a href=\"$url&q=".b64u("explain $vq")."\">exp</a></td>"
-     ."<td>&#183;<a href=\"$url&q=".b64u("show index from $vq")."\">ind</a></td>"
-     ."<td>&#183;<a href=\"$url&shex=1&rt=".hs(ue($vq))."\">export</a></td>"
-     ."<td>&#183;<a href=\"$url&q=".b64u("drop table $vq")."\" onclick='return ays()'>dr</a></td>"
-     ."<td>&#183;<a href=\"$url&q=".b64u("truncate table $vq")."\" onclick='return ays()'>tr</a></td>"
-     ."<td>&#183;<a href=\"$url&q=".b64u("optimize table $vq")."\" onclick='return ays()'>opt</a></td>"
-     ."<td>&#183;<a href=\"$url&q=".b64u("repair table $vq")."\" onclick='return ays()'>rpr</a></td>"
-     ."<td>".hs($row[$fields_num-1])."</td>";
-   }elseif ($is_shd){
-     $url='?'.$xurl."&db=".ue($v)."&srv=$srvn";
-     $sqldr.="<td><a href=\"$url&q=".b64u("SHOW TABLE STATUS")."\">".hs($v)."</a></td>"
-     ."<td><a href=\"$url&q=".b64u("show create database ".dbqid($v))."\">scd</a></td>"
-     ."<td><a href=\"$url&q=".b64u("show table status")."\">status</a></td>"
-     ."<td><a href=\"$url&q=".b64u("show triggers")."\">trig</a></td>";
-   }else{
-     for($i=0;$i<$fields_num;$i++){
-      $v=$row[$i];
-      if (is_null($v)) $v="<i>NULL</i>";
-      elseif (preg_match('/[\x00-\x09\x0B\x0C\x0E-\x1F]+/',$v)){#all chars <32, except \n\r(0D0A)
-       $vl=strlen($v);$pf='';
-       if ($vl>16 && $fields_num>1){#show full dump if just one field
-         $v=substr($v, 0, 16);$pf='...';
-       }
-       $v='BINARY: '.chunk_split(strtoupper(bin2hex($v)),2,' ').$pf;
-      }else $v=hs($v);
-      if ($is_show_crt) $v="<pre>$v</pre>";
-      $sqldr.="<td><div>$v".(!strlen($v)?"<br>":'')."</div></td>";
-     }
-   }
-   $sqldr.="</tr>\n";
- }
- $sqldr.="</table>";
- if ($is_sht) $sqldr.="</div></div>"; // Close table-container-inner and table-actions
- $sqldr.="</div>\n";
+function render_regular_row($row, $fields_num, $is_show_create) {
+    $html = '';
+    
+    for ($i = 0; $i < $fields_num; $i++) {
+        $value = format_cell_value($row[$i], $is_show_create);
+        $html .= "<td><div>{$value}" . (empty($value) ? "<br>" : '') . "</div></td>";
+    }
+    
+    return $html;
 }
 
 function print_header(){
@@ -1578,6 +1595,152 @@ function process_login_attempt($provided_password, $expected_password) {
     $_SESSION['is_logged'] = true;
     
     return create_success_response(['message' => 'Login successful']);
+}
+
+// Pure functions for table rendering - much cleaner than the horrible display_select!
+function detect_query_type($query) {
+    return [
+        'is_show_databases' => preg_match('/^show\s+databases/i', $query),
+        'is_show_tables' => preg_match('/^show\s+tables|^SHOW\s+TABLE\s+STATUS/', $query),
+        'is_show_create' => preg_match('/^show\s+create\s+table/i', $query)
+    ];
+}
+
+function format_cell_value($value, $is_show_create = false) {
+    if (is_null($value)) {
+        return "<i>NULL</i>";
+    }
+    
+    // Check for binary data
+    if (preg_match('/[\x00-\x09\x0B\x0C\x0E-\x1F]+/', $value)) {
+        $length = strlen($value);
+        $prefix = '';
+        
+        if ($length > 16) {
+            $value = substr($value, 0, 16);
+            $prefix = '...';
+        }
+        
+        return 'BINARY: ' . chunk_split(strtoupper(bin2hex($value)), 2, ' ') . $prefix;
+    }
+    
+    $escaped_value = hs($value);
+    
+    if ($is_show_create) {
+        return "<pre>{$escaped_value}</pre>";
+    }
+    
+    return $escaped_value;
+}
+
+function create_table_action_link($url, $query, $text, $confirm = false) {
+    $encoded_query = b64u($query);
+    $onclick = $confirm ? " onclick='return ays()'" : "";
+    return "&#183;<a href=\"{$url}&q={$encoded_query}\"{$onclick}>{$text}</a>";
+}
+
+function create_export_link($url, $table_name) {
+    return "&#183;<a href=\"{$url}&shex=1&rt=" . hs(ue($table_name)) . "\">export</a>";
+}
+
+function render_table_row_actions($url, $table_name, $table_quoted) {
+    $actions = [
+        create_table_action_link($url, "show create table {$table_quoted}", "sct"),
+        create_table_action_link($url, "explain {$table_quoted}", "exp"),
+        create_table_action_link($url, "show index from {$table_quoted}", "ind"),
+        create_export_link($url, $table_quoted),
+        create_table_action_link($url, "drop table {$table_quoted}", "dr", true),
+        create_table_action_link($url, "truncate table {$table_quoted}", "tr", true),
+        create_table_action_link($url, "optimize table {$table_quoted}", "opt", true),
+        create_table_action_link($url, "repair table {$table_quoted}", "rpr", true)
+    ];
+    
+    return implode("</td><td>", $actions);
+}
+
+function render_database_row_actions($url, $db_name, $db_quoted) {
+    return [
+        "<a href=\"{$url}&q=" . b64u("show create database {$db_quoted}") . "\">scd</a>",
+        "<a href=\"{$url}&q=" . b64u("show table status") . "\">status</a>",
+        "<a href=\"{$url}&q=" . b64u("show triggers") . "\">trig</a>"
+    ];
+}
+
+function create_table_headers($query_type, $field_names) {
+    $headers = "<tr class='h'>";
+    
+    if ($query_type['is_show_tables']) {
+        $headers .= "<td><input type='checkbox' name='cball' value='' onclick='chkall(this)'></td>";
+    }
+    
+    // Add main field headers
+    foreach ($field_names as $name) {
+        if ($query_type['is_show_tables'] && array_search($name, $field_names) > 0) {
+            break; // Only show first field for show tables
+        }
+        $headers .= "<th><div>" . hs($name) . "</div></th>";
+    }
+    
+    // Add action headers
+    if ($query_type['is_show_databases']) {
+        $headers .= "<th>show create database</th><th>show table status</th><th>show triggers</th>";
+    } elseif ($query_type['is_show_tables']) {
+        $headers .= "<th>engine</th><th>~rows</th><th>data size</th><th>index size</th>";
+        $headers .= "<th>show create table</th><th>explain</th><th>indexes</th><th>export</th>";
+        $headers .= "<th>drop</th><th>truncate</th><th>optimize</th><th>repair</th><th>comment</th>";
+    }
+    
+    return $headers . "</tr>\n";
+}
+
+function create_info_card($query_type, $config) {
+    if (!($query_type['is_show_tables'] || $query_type['is_show_databases'])) {
+        return '';
+    }
+    
+    $card = "<div class='server-info-card'>";
+    $card .= "<h3 class='server-info-title'>🖥️ MySQL Server</h3>";
+    $card .= "<div class='server-info-links'>";
+    
+    $base_url = "?{$config['xurl']}&db={$config['db']}&srv={$config['srv']}";
+    
+    $card .= "<a href='{$base_url}&q=" . b64u("show variables") . "' class='server-link'>⚙️ Configuration Variables</a>";
+    $card .= "<a href='{$base_url}&q=" . b64u("show status") . "' class='server-link'>📊 Statistics</a>";
+    $card .= "<a href='{$base_url}&q=" . b64u("show processlist") . "' class='server-link'>⚡ Process List</a>";
+    $card .= "</div>";
+    
+    if ($query_type['is_show_databases']) {
+        $card .= "<div style='margin:1rem 0;display:flex;gap:0.5rem;align-items:center;'>";
+        $card .= "<label style='display:flex;gap:0.5rem;align-items:center;color:var(--muted);font-size:0.875rem;'>";
+        $card .= "Create new database: <input type='text' name='new_db' placeholder='database name' class='form-input' style='width:200px;'>";
+        $card .= "</label> <button type='submit' name='crdb' class='btn btn-primary btn-sm'>✨ Create</button></div>";
+    }
+    
+    if ($query_type['is_show_tables']) {
+        $card .= "<div class='database-info'><span class='database-label'>Database:</span>";
+        $card .= " <a href='{$base_url}&q=" . b64u("show table status") . "' class='server-link'>📋 Table Status</a></div>";
+    }
+    
+    return $card . "</div>";
+}
+
+function create_table_actions_section($query_type) {
+    if (!$query_type['is_show_tables']) {
+        return '';
+    }
+    
+    return "</div><div class='table-actions'>
+        <div class='table-actions-content'>
+            <div class='table-actions-buttons'>
+                <button type='submit' class='btn btn-primary btn-sm' onclick=\"sht('exp')\">📊 Export</button>
+                <button type='submit' class='btn btn-error btn-sm' onclick=\"if(ays()){sht('drop')}else{return false}\">🗑️ Drop</button>
+                <button type='submit' class='btn btn-warning btn-sm' onclick=\"if(ays()){sht('trunc')}else{return false}\">✂️ Truncate</button>
+                <button type='submit' class='btn btn-success btn-sm' onclick=\"sht('opt')\">⚡ Optimize</button>
+            </div>
+            <span class='table-actions-label'><strong>selected tables</strong></span>
+        </div>
+        <div class='table-container-inner'>
+        <input type='hidden' name='dosht' value=''>";
 }
 
 // Database operation helpers - functional approach
