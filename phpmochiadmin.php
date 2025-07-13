@@ -180,6 +180,33 @@ if (db_connect('nodie')){
   print_cfg();
 }
 
+function print_screen(){
+    global $sqldr, $time_all, $out_message, $SQLq, $reccount, $is_sht;
+    
+    print_header();
+    
+    // Prepare template data for main interface
+    $template_data = [
+        'sql_query' => $SQLq ?? '',
+        'has_results' => !empty($sqldr),
+        'content' => $sqldr ?? '',
+        'execution_time' => $time_all ?? 0,
+        'message' => $out_message ?? '',
+        'record_count' => $reccount ?? 0,
+        'is_show_tables' => $is_sht ?? false
+    ];
+    
+    // Render main interface using template
+    echo render_template('main_interface', $template_data);
+    
+    // Use print_footer
+    print_footer();
+}
+
+function print_footer(){
+    echo render_template('footer', []);
+}
+
 function do_sql($q){
  global $dbh,$last_sth,$last_sql,$reccount,$out_message,$SQLq,$SHOW_T,$DB;
  $SQLq=$q;
@@ -258,8 +285,15 @@ function display_select($sth, $q) {
     if ($config['is_sm']) $table_classes .= ' sm';
     if ($query_type['is_show_tables'] || $query_type['is_show_databases']) $table_classes .= ' wa';
     
-    // Start table
-    $sqldr .= "<div><table id='res' class='{$table_classes}'>";
+    // Start table with proper container structure
+    $sqldr .= "<div class='table-container'>";
+    
+    // Only add table-container-inner div if not show_tables (which adds it in table_actions)
+    if (!$query_type['is_show_tables']) {
+        $sqldr .= "<div class='table-container-inner'>";
+    }
+    
+    $sqldr .= "<table id='res' class='{$table_classes}'>";
     
     // Add headers
     $sqldr .= create_table_headers($query_type, $field_names);
@@ -270,12 +304,13 @@ function display_select($sth, $q) {
     // Close table
     $sqldr .= "</table>";
     
-    // Close action containers if needed
-    if ($query_type['is_show_tables']) {
-        $sqldr .= "</div></div>"; // Close table-container-inner and table-actions
+    // Close table-container-inner if we opened it
+    if (!$query_type['is_show_tables']) {
+        $sqldr .= "</div>"; // Close table-container-inner
     }
     
-    $sqldr .= "</div>\n";
+    // Close main table container
+    $sqldr .= "</div>\n"; // Close table-container
 }
 
 function render_table_rows($sth, $query_type, $config, $field_names, $fields_num) {
@@ -287,17 +322,21 @@ function render_table_rows($sth, $query_type, $config, $field_names, $fields_num
     
     while ($row = mysqli_fetch_row($sth)) {
         $row_class = $row_classes[$row_toggle = !$row_toggle];
-        $html .= "<tr class='{$row_class}' onclick='tc(this)'>";
         
         if ($query_type['is_show_tables']) {
-            $html .= render_show_tables_row($row, $config, $fields_num);
+            $content = render_show_tables_row($row, $config, $fields_num);
         } elseif ($query_type['is_show_databases']) {
-            $html .= render_show_databases_row($row, $config);
+            $content = render_show_databases_row($row, $config);
         } else {
-            $html .= render_regular_row($row, $fields_num, $query_type['is_show_create']);
+            $content = render_regular_row($row, $fields_num, $query_type['is_show_create']);
         }
         
-        $html .= "</tr>\n";
+        $template_data = [
+            'row_class' => $row_class,
+            'content' => $content
+        ];
+        
+        $html .= render_template('table_row', $template_data);
     }
     
     return $html;
@@ -307,1148 +346,111 @@ function render_show_tables_row($row, $config, $fields_num) {
     $table_name = $row[0];
     $table_quoted = dbqid($table_name);
     $url = "?{$config['xurl']}&db={$config['db']}&srv={$config['srv']}&t=" . b64u($table_name);
+    $table_url = $url . "&q=" . b64u("select * from {$table_quoted}");
     
-    $html = "<td><input type='checkbox' name='cb[]' value=\"" . hs($table_quoted) . "\"></td>";
-    $html .= "<td><a href=\"{$url}&q=" . b64u("select * from {$table_quoted}") . "\">" . hs($table_name) . "</a></td>";
-    $html .= "<td>" . hs($row[1]) . "</td>"; // Engine
-    $html .= "<td align='right'>" . hs($row[4]) . "</td>"; // Rows
-    $html .= "<td align='right'>" . hs($row[6]) . "</td>"; // Data size
-    $html .= "<td align='right'>" . hs($row[8]) . "</td>"; // Index size
-    $html .= "<td>" . render_table_row_actions($url, $table_name, $table_quoted) . "</td>";
-    $html .= "<td>" . hs($row[$fields_num - 1]) . "</td>"; // Comment
+    $template_data = [
+        'table_quoted' => $table_quoted,
+        'table_url' => $table_url,
+        'table_name' => $table_name,
+        'engine' => $row[1],
+        'rows' => $row[4],
+        'data_size' => $row[6],
+        'index_size' => $row[8],
+        'actions' => render_table_row_actions($url, $table_name, $table_quoted),
+        'comment' => $row[$fields_num - 1]
+    ];
     
-    return $html;
+    return render_template('show_tables_row', $template_data);
 }
 
 function render_show_databases_row($row, $config) {
     $db_name = $row[0];
     $db_quoted = dbqid($db_name);
     $url = "?{$config['xurl']}&db=" . ue($db_name) . "&srv={$config['srv']}";
+    $db_url = $url . "&q=" . b64u("SHOW TABLE STATUS");
     
-    $html = "<td><a href=\"{$url}&q=" . b64u("SHOW TABLE STATUS") . "\">" . hs($db_name) . "</a></td>";
+    $template_data = [
+        'db_name' => $db_name,
+        'db_url' => $db_url,
+        'actions' => render_database_row_actions($url, $db_name, $db_quoted)
+    ];
     
-    $actions = render_database_row_actions($url, $db_name, $db_quoted);
-    foreach ($actions as $action) {
-        $html .= "<td>{$action}</td>";
-    }
-    
-    return $html;
+    return render_template('show_databases_row', $template_data);
 }
 
 function render_regular_row($row, $fields_num, $is_show_create) {
-    $html = '';
+    $cells = [];
     
     for ($i = 0; $i < $fields_num; $i++) {
-        $value = format_cell_value($row[$i], $is_show_create);
-        $html .= "<td><div>{$value}" . (empty($value) ? "<br>" : '') . "</div></td>";
+        $cells[] = format_cell_value($row[$i], $is_show_create);
     }
     
-    return $html;
+    $template_data = [
+        'cells' => $cells
+    ];
+    
+    return render_template('regular_row', $template_data);
 }
 
 function print_header(){
- global $err_msg,$VERSION,$DBSERVERS,$SRV,$DB,$dbh,$self,$is_sht,$xurl,$SHOW_T;
- $dbn=$DB['db'];
-?>
-<!DOCTYPE html>
-<html>
-<head><title>phpMochiAdmin</title>
-<meta charset="utf-8">
-<style>
-/* Modern CSS */
-:root{
-  --bg:#f8fafc;--text:#0f172a;--muted:#64748b;--border:#e2e8f0;
-  --card:#ffffff;--accent:#3b82f6;--accent-dark:#2563eb;--radius:6px;
-  --shadow:0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  --shadow-sm:0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --success:#10b981;--warning:#f59e0b;--error:#ef4444;
-}
-
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #f8fafc;
-  color: #0f172a;
-  line-height: 1.6;
-  font-size: 14px;
-  margin: 0;
-  padding: 0;
-  min-height: 100vh;
-}
-
-/* Removed sidebar layout - back to single column */
-
-/* Layout */
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 1rem;
-}
-
-/* Navigation bar - clean and simple like shadcnblocks */
-.nav {
-  background: #ffffff;
-  border-bottom: 1px solid #e2e8f0;
-  padding: 1rem 0;
-  margin-bottom: 2rem;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
-  width: 100%;
-  display: block;
-}
-
-.nav-content {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  flex-wrap: wrap;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 1rem;
-  min-height: 60px;
-}
-
-.nav-brand {
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: #0f172a;
-  text-decoration: none;
-  margin-right: 2rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.nav-links {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-left: auto;
-}
-
-.nav a {
-  color: #64748b;
-  text-decoration: none;
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  transition: all 0.2s;
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.nav a:hover {
-  color: #0f172a;
-  background: #f1f5f9;
-}
-
-/* Navigation form elements */
-.nav label {
-  color: #64748b;
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.nav-select {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  color: #0f172a;
-  font-size: 0.875rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  margin: 0 0.25rem;
-  min-width: 180px;
-  max-width: 220px;
-}
-
-.nav-select:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  outline: none;
-}
-
-.nav-select option {
-  background: #ffffff;
-  color: #0f172a;
-}
-
-/* Cards */
-.card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  margin-bottom: 1.5rem;
-  box-shadow: var(--shadow);
-}
-
-.card-header {
-  margin-bottom: 1rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.card-title {
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0;
-}
-
-/* Forms */
-.form-group {
-  margin-bottom: 1rem;
-}
-
-.form-label {
-  display: block;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--text);
-  margin-bottom: 0.5rem;
-}
-
-.form-input, .form-select, .form-textarea {
-  width: 100%;
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-size: 0.875rem;
-  background: var(--card);
-  color: var(--text);
-  transition: all 0.2s;
-}
-
-.form-input:focus, .form-select:focus, .form-textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-}
-
-.form-textarea {
-  resize: vertical;
-  min-height: 120px;
-}
-
-/* Buttons */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  font-weight: 500;
-  font-size: 0.875rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: all 0.2s;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.btn-primary {
-  background: var(--accent);
-  color: white;
-}
-
-.btn-primary:hover {
-  background: var(--accent-dark);
-}
-
-.btn-secondary {
-  background: #f3f4f6;
-  color: var(--text);
-  border-color: var(--border);
-}
-
-.btn-secondary:hover {
-  background: #e5e7eb;
-}
-
-.btn-ghost {
-  background: transparent;
-  color: var(--text);
-}
-
-.btn-ghost:hover {
-  background: #f3f4f6;
-}
-
-.btn-sm {
-  padding: 0.5rem 0.75rem;
-  font-size: 0.75rem;
-}
-
-.btn-lg {
-  padding: 1rem 1.5rem;
-  font-size: 1rem;
-}
-
-.btn-success {
-  background: var(--success);
-  color: white;
-}
-
-.btn-warning {
-  background: var(--warning);
-  color: white;
-}
-
-.btn-error {
-  background: var(--error);
-  color: white;
-}
-
-/* Tables */
-.table-container {
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--card);
-  margin: 1rem 0;
-  box-shadow: var(--shadow);
-}
-
-.table-container-inner {
-  overflow-x: auto;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-
-
-table.res {
-  width: 100%;
-}
-
-table.wa {
-  width: auto;
-}
-
-th, td {
-  padding: 0.75rem;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-}
-
-th {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  background: #f9fafb;
-}
-
-tbody tr:hover {
-  background: #f9fafb;
-}
-
-/* Legacy classes for compatibility */
-tr.e {
-  background-color: #f9fafb;
-}
-
-tr.o {
-  background-color: white;
-}
-
-tr.e:hover, tr.o:hover {
-  background-color: #eff6ff;
-}
-
-tr.h {
-  background-color: #dbeafe;
-}
-
-tr.s {
-  background-color: #fef3c7;
-}
-
-/* Query area */
-.query-area {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem;
-  margin-bottom: 1rem;
-}
-
-.query-buttons {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 1rem;
-  flex-wrap: wrap;
-}
-
-/* Messages */
-.message {
-  padding: 1rem;
-  border-radius: var(--radius);
-  margin-bottom: 1rem;
-  border: 1px solid;
-}
-
-.message-error {
-  background: #fef2f2;
-  border-color: #fecaca;
-  color: #991b1b;
-}
-
-.message-success {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
-  color: #166534;
-}
-
-.message-warning {
-  background: #fffbeb;
-  border-color: #fed7aa;
-  color: #92400e;
-}
-
-/* Footer */
-.footer {
-  text-align: center;
-  padding: 2rem;
-  color: var(--muted);
-  font-size: 0.875rem;
-  border-top: 1px solid var(--border);
-  margin-top: 2rem;
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-  .nav-content {
-    flex-direction: column;
-    gap: 1rem;
-  }
-  
-  .nav-links {
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-  
-  .nav-brand {
-    margin-right: 0;
-    margin-bottom: 0.5rem;
-  }
-  
-  .container {
-    padding: 0.5rem;
-  }
-  
-  .card {
-    padding: 1rem;
-  }
-  
-  .table-actions-content {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 1rem;
-  }
-  
-  .table-actions-buttons {
-    justify-content: center;
-  }
-  
-  .query-buttons {
-    flex-direction: column;
-  }
-}
-
-/* Checkbox and form elements styling */
-input[type="checkbox"], input[type="radio"] {
-  margin-right: 0.5rem;
-  accent-color: var(--accent);
-}
-
-label {
-  cursor: pointer;
-}
-
-/* Table actions specific styling */
-.table-actions {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 var(--radius) var(--radius);
-}
-
-.table-actions-content {
-  padding: 1rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-
-.table-actions-buttons {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.table-actions-label {
-  color: var(--muted);
-  font-size: 0.875rem;
-  white-space: nowrap;
-}
-
-.table-actions .btn {
-  box-shadow: var(--shadow-sm);
-}
-
-.table-container-inner {
-  border-radius: var(--radius) var(--radius) 0 0;
-  overflow: hidden;
-}
-
-/* Database/table link styling */
-td a {
-  color: var(--accent);
-  text-decoration: none;
-}
-
-td a:hover {
-  text-decoration: underline;
-}
-
-/* Info boxes and status messages */
-.info-box {
-  background: #f0f9ff;
-  border: 1px solid #bae6fd;
-  border-radius: var(--radius);
-  padding: 1rem;
-  margin: 1rem 0;
-  color: #0369a1;
-}
-
-/* Input file styling */
-input[type="file"] {
-  padding: 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card);
-  width: 100%;
-}
-
-/* Server info styling */
-.server-info-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  margin-bottom: 1.5rem;
-  box-shadow: var(--shadow-sm);
-}
-
-.server-info-title {
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0 0 1rem 0;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.server-info-links {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-bottom: 1rem;
-}
-
-.server-link {
-  color: var(--accent);
-  text-decoration: none;
-  padding: 0.5rem 1rem;
-  border-radius: var(--radius);
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  font-size: 0.875rem;
-  font-weight: 500;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.server-link:hover {
-  background: var(--accent);
-  color: white;
-  transform: translateY(-1px);
-  box-shadow: var(--shadow);
-}
-
-.database-info {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.database-label {
-  font-weight: 500;
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
-/* Pagination navigation styling */
-.pagination-nav {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem;
-  margin: 1rem 0;
-  text-align: center;
-  box-shadow: var(--shadow-sm);
-}
-
-.pagination-nav a {
-  color: var(--accent);
-  text-decoration: none;
-  padding: 0.5rem 0.75rem;
-  margin: 0 0.25rem;
-  border-radius: var(--radius);
-  transition: all 0.2s;
-  display: inline-block;
-}
-
-.pagination-nav a:hover {
-  background: var(--accent);
-  color: white;
-}
-
-/* Legacy compatibility */
-.frm {
-  max-width: 520px;
-  margin: 0 auto;
-}
-
-.ajax {
-  text-decoration: none;
-  border-bottom: 1px dashed var(--accent);
-  color: var(--accent);
-}
-
-.ajax:hover {
-  color: var(--accent-dark);
-}
-
-.clear {
-  clear: both;
-  height: 0;
-  display: block;
-}
-
-/* phpinfo styles */
-.pi a {
-  text-decoration: none;
-}
-
-.pi hr {
-  display: none;
-}
-
-.pi img {
-  float: right;
-}
-
-.pi .center {
-  text-align: center;
-}
-
-.pi table {
-  margin: 0 auto;
-}
-
-.pi table td, .pi table th {
-  border: 1px solid var(--border);
-  text-align: left;
-  vertical-align: baseline;
-}
-
-.pi table .e {
-  background-color: #dbeafe;
-  font-weight: bold;
-}
-
-.pi table .v {
-  background-color: #f3f4f6;
-}
-</style>
-
-<script type="text/javascript">
-var LSK='pma_',LSKX=LSK+'max',LSKM=LSK+'min',qcur=0,LSMAX=32;
-
-function $(i){return document.getElementById(i)}
-function frefresh(){
- var F=document.DF;
- F.method='get';
- F.refresh.value="1";
- F.GoSQL.click();
-}
-function go(p,sql){
- var F=document.DF;
- F.p.value=p;
- if(sql)F.q.value=sql;
- F.GoSQL.click();
-}
-function ays(){
- return confirm('Are you sure to continue?');
-}
-function chksql(){
- var F=document.DF,v=F.qraw.value;
- if(/^\s*(?:delete|drop|truncate|alter)/.test(v)) if(!ays())return false;
- if(lschk(1)){
-  var lsm=lsmax()+1,ls=localStorage;
-  ls[LSK+lsm]=v;
-  ls[LSKX]=lsm;
-  //keep just last LSMAX queries in log
-  if(!ls[LSKM])ls[LSKM]=1;
-  var lsmin=parseInt(ls[LSKM]);
-  if((lsm-lsmin+1)>LSMAX){
-   lsclean(lsmin,lsm-LSMAX);
-  }
- }
- return true;
-}
-function tc(tr){
- if (tr.className=='s'){
-  tr.className=tr.classNameX;
- }else{
-  tr.classNameX=tr.className;
-  tr.className='s';
- }
-}
-function lschk(skip){
- if (!localStorage || !skip && !localStorage[LSKX]) return false;
- return true;
-}
-function lsmax(){
- var ls=localStorage;
- if(!lschk() || !ls[LSKX])return 0;
- return parseInt(ls[LSKX]);
-}
-function lsclean(from,to){
- ls=localStorage;
- for(var i=from;i<=to;i++){
-  delete ls[LSK+i];ls[LSKM]=i+1;
- }
-}
-function q_prev(){
- var ls=localStorage;
- if(!lschk())return;
- qcur--;
- var x=parseInt(ls[LSKM]);
- if(qcur<x)qcur=x;
- $('qraw').value=ls[LSK+qcur];
-}
-function q_next(){
- var ls=localStorage;
- if(!lschk())return;
- qcur++;
- var x=parseInt(ls[LSKX]);
- if(qcur>x)qcur=x;
- $('qraw').value=ls[LSK+qcur];
-}
-function after_load(){
- var F=document.DF;
- var p=F['v[pwd]'];
- if (p) p.focus();
- qcur=lsmax();
-
- F.addEventListener('submit',function(e){
-  if(!F.qraw)return;
-  if(!chksql()){e.preventDefault();return}
-  $('q').value=btoa(encodeURIComponent($('qraw').value).replace(/%([0-9A-F]{2})/g,function(m,p){return String.fromCharCode('0x'+p)}));
- });
- var res=$('res');
- if(res)res.addEventListener('dblclick',function(e){
-  if(!$('is_sm').checked)return;
-  var el=e.target;
-  if(el.tagName!='TD')el=el.parentNode;
-  if(el.tagName!='TD')return;
-  if(el.className.match(/\b\lg\b/))el.className=el.className.replace(/\blg\b/,' ');
-  else el.className+=' lg';
- });
-}
-function logoff(){
- if(lschk()){
-  var ls=localStorage;
-  var from=parseInt(ls[LSKM]),to=parseInt(ls[LSKX]);
-  for(var i=from;i<=to;i++){
-   delete ls[LSK+i];
-  }
-  delete ls[LSKM];delete ls[LSKX];
- }
-}
-function cfg_toggle(){
- var e=$('cfg-adv');
- e.style.display=e.style.display=='none'?'':'none';
-}
-function qtpl(s){
- $('qraw').value=s.replace(/%T/g,"`<?php eo(($_REQUEST['t']??0)?b64d($_REQUEST['t']):'tablename')?>`");
-}
-function smview(){
- if($('is_sm').checked){$('res').className+=' sm'}else{$('res').className = $('res').className.replace(/\bsm\b/,' ')}
-}
-<?php if($is_sht){?>
-function chkall(cab){
- var e=document.DF.elements;
- if (e!=null){
-  var cl=e.length;
-  for (i=0;i<cl;i++){var m=e[i];if(m.checked!=null && m.type=="checkbox"){m.checked=cab.checked}}
- }
-}
-function sht(f){
- document.DF.dosht.value=f;
-}
-<?php }?>
-</script>
-
-</head>
-<body onload="after_load()">
-<form method="post" name="DF" id="DF" action="<?php eo($self)?>" enctype="multipart/form-data">
-<input type="hidden" name="XSS" value="<?php eo($_SESSION['XSS'])?>">
-<input type="hidden" name="refresh" value="">
-<input type="hidden" name="p" value="">
-
-<nav class="nav">
-  <div class="nav-content">
-    <a href="https://github.com/phpMochiAdmin/phpMochiAdmin" target="_blank" class="nav-brand">
-      🍡 <?php eo($VERSION)?>
-    </a>
-    <div class="nav-links">
-<?php if ($_SESSION['is_logged'] && $dbh){
- if ($DBSERVERS){?>
-        <label>Servers:</label>
-        <select name="srv" onChange="frefresh()" class="nav-select">
-          <option value=''>- select/refresh -</option>
-          <?php echo @sel($DBSERVERS,'iname',$SRV)?>
-        </select>
-<?php }?>
-        <a href="?<?php eo("$xurl&db=".ue($dbn)."&srv=".ue($SRV).'&q='.b64u("show processlist"))?>">⚡ Processes</a>
-        <a href="?<?php eo($xurl.'&q='.b64u("show databases"))?>">🗂️ Databases</a>
-        <select name="db" onChange="frefresh()" class="nav-select">
-          <option value='*'> - select/refresh -</option>
-          <option value=''> - show all -</option>
-          <?php echo get_db_select($dbn)?>
-        </select>
-<?php if($dbn){ $z=" href='".hs($self."?$xurl&db=".ue($dbn)."&srv=".ue($SRV)) ?>
-        <a<?php echo $z.'&q='.b64u($SHOW_T)?>'">📋 Tables</a>
-        <a<?php echo $z?>&shex=1'">📊 Export</a>
-        <a<?php echo $z?>&shim=1'">📤 Import</a>
-<?php } ?>
-        <a href="?showcfg=1">⚙️ Settings</a>
-<?php } ?>
-<?php if ($_SESSION['is_logged']){?>
-        <a href="?<?php eo($xurl)?>&logoff=1" onclick="logoff()">🚪 Logoff</a>
-<?php }?>
-        <a href="?pi=1">ℹ️ PHP Info</a>
-    </div>
-  </div>
-</nav>
-
-<div class="container">
-
-<?php if ($err_msg) { ?>
-<div class="message message-error" style="margin:1rem 0;">
-  <?php eo($err_msg)?>
-</div>
-<?php } ?>
-
-<?php
-}
-
-// Pure function for generating pagination
-function create_pagination_data($page, $reccount, $max_rows, $is_limited) {
-    if (!$is_limited || (!$page && $reccount < $max_rows)) {
-        return ['show' => false, 'html' => ''];
-    }
+    global $err_msg,$VERSION,$DBSERVERS,$SRV,$DB,$dbh,$self,$is_sht,$xurl,$SHOW_T;
     
-    return [
-        'show' => true,
-        'html' => "<div class='pagination-nav'>" . get_nav($page, 10000, $max_rows, "javascript:go(%p%)") . "</div>"
+    // Use the new template system!
+    $template_data = [
+        'title' => 'phpMochiAdmin',
+        'version' => $VERSION,
+        'is_logged' => $_SESSION['is_logged'] ?? false,
+        'has_connection' => !!$dbh,
+        'servers' => $DBSERVERS,
+        'current_server' => $SRV,
+        'db' => $DB['db'],
+        'xurl' => $xurl,
+        'self' => $self,
+        'show_tables' => $SHOW_T,
+        'db_options' => get_db_select($DB['db']),
+        'xss_token' => $_SESSION['XSS'] ?? '',
+        'error_message' => $err_msg,
+        'content' => ''
     ];
-}
-
-// Pure function for generating query interface data
-function create_query_interface_data($SQLq, $db) {
-    return [
-        'sql_query' => $SQLq,
-        'has_db' => !empty($db),
-        'template_buttons' => [
-            'select' => 'SELECT *\nFROM %T\nWHERE 1',
-            'insert' => 'INSERT INTO %T (`column`, `column`)\nVALUES (\'value\', \'value\')',
-            'update' => 'UPDATE %T\nSET `column`=\'value\'\nWHERE 1=0',
-            'delete' => 'DELETE FROM %T\nWHERE 1=0'
-        ]
-    ];
-}
-
-// Pure function for generating results data
-function create_results_data($out_message, $sqldr, $reccount, $last_count, $time_all, $is_sm) {
-    return [
-        'has_results' => !empty($sqldr) || !empty($out_message) || $reccount > 0,
-        'message' => $out_message,
-        'content' => $sqldr,
-        'record_count' => $reccount,
-        'total_count' => $last_count,
-        'execution_time' => $time_all,
-        'compact_view' => $is_sm
-    ];
-}
-
-function print_screen(){
- global $out_message, $SQLq, $err_msg, $reccount, $time_all, $sqldr, $page, $MAX_ROWS_PER_PAGE, $is_limited_sql, $last_count, $is_sm, $DB;
-
- // Create data structures using pure functions
- $pagination = create_pagination_data($page, $reccount, $MAX_ROWS_PER_PAGE, $is_limited_sql);
- $query_interface = create_query_interface_data($SQLq, $DB['db']);
- $results = create_results_data($out_message, $sqldr, $reccount, $last_count, $time_all, $is_sm);
-
- print_header();
-?>
-
-<div class="card">
-  <div class="card-header">
-    <h2 class="card-title">
-      SQL Query
-      <div style="float:right;display:flex;gap:0.5rem;align-items:center;">
-        <button type="button" class="btn btn-ghost btn-sm" onclick="q_prev()" title="Previous query">&lt;</button>
-        <button type="button" class="btn btn-ghost btn-sm" onclick="q_next()" title="Next query">&gt;</button>
-      </div>
-    </h2>
-  </div>
-  
-  <div class="form-group">
-    <label for="qraw" class="form-label">SQL query (or multiple queries separated by ";"):</label>
-    <textarea id="qraw" class="form-textarea" rows="8" placeholder="Enter your SQL query here..."><?php eo($query_interface['sql_query'])?></textarea>
-    <input type="hidden" name="q" id="q" value="<?php b64e($query_interface['sql_query']);?>">
-  </div>
-  
-  <div class="query-buttons">
-    <button type="submit" name="GoSQL" class="btn btn-primary">
-      <span>Execute Query</span>
-    </button>
-    <button type="button" class="btn btn-secondary" onclick="$('qraw').value='';">
-      Clear
-    </button>
     
-    <?php if($query_interface['has_db']){ ?>
-    <div style="margin-left:auto;display:flex;gap:0.5rem;flex-wrap:wrap;">
-      <?php foreach($query_interface['template_buttons'] as $name => $template): ?>
-      <button type="button" class="btn btn-ghost btn-sm" onclick="qtpl('<?php echo addslashes($template)?>')"><?php echo ucfirst($name)?></button>
-      <?php endforeach; ?>
-    </div>
-    <?php } ?>
-  </div>
-</div>
-<?php if ($results['has_results']) { ?>
-<div class="card">
-  <div class="card-header">
-    <h2 class="card-title">
-      Query Results
-      <div style="float:right;display:flex;gap:1rem;align-items:center;font-size:0.875rem;font-weight:normal;">
-        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
-          <input type="checkbox" name="is_sm" value="1" id="is_sm" onclick="smview()" <?php eo($results['compact_view']?'checked':'')?>>
-          Compact view
-        </label>
-        <span class="text-muted">
-          Records: <strong><?php eo($results['record_count']); if(!is_null($results['total_count']) && $results['record_count']<$results['total_count']){eo(' of '.$results['total_count']);}?></strong>
-          in <strong><?php eo($results['execution_time'])?></strong> sec
-        </span>
-      </div>
-    </h2>
-  </div>
-  
-  <?php if ($results['message']) { ?>
-  <div class="message message-success">
-    <?php eo($results['message'])?>
-  </div>
-  <?php } ?>
-  
-  <?php if ($results['content']) { ?>
-    <?php echo $pagination['html'].$results['content'].$pagination['html']; ?>
-  <?php } ?>
-</div>
-<?php } ?>
-<?php
- print_footer();
+    echo render_template('layout_start', $template_data);
 }
 
-function print_footer(){
-?>
-</div> <!-- Close container -->
-</form>
-<footer style="background:#ffffff;border-top:1px solid #e2e8f0;padding:2rem;text-align:center;color:#64748b;font-size:0.875rem;margin-top:2rem;">
-  🍡 phpMochiAdmin - Enhanced with functional programming<br>
-  Based on phpMiniAdmin &copy; 2004-2024 <a href="http://osalabs.com" target="_blank" style="color:#3b82f6;text-decoration:none;">Oleg Savchuk</a>
-</footer>
-</body></html>
-<?php
-}
 
 function print_login(){
-?>
-<!DOCTYPE html>
-<html>
-<head><title>phpMochiAdmin Login</title>
-<meta charset="utf-8">
-<style>
-body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #f8fafc;
-  color: #0f172a;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-}
-.login-card {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 2rem;
-  width: 400px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-.login-header {
-  text-align: center;
-  margin-bottom: 2rem;
-}
-.login-title {
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: #0f172a;
-  margin: 0 0 0.5rem;
-}
-.login-subtitle {
-  color: #64748b;
-  font-size: 0.875rem;
-  margin: 0;
-}
-.form-group {
-  margin-bottom: 1.5rem;
-}
-.form-label {
-  display: block;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: #0f172a;
-  margin-bottom: 0.5rem;
-}
-.form-input {
-  width: 100%;
-  padding: 0.75rem;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  font-size: 0.875rem;
-  background: white;
-  color: #0f172a;
-  box-sizing: border-box;
-}
-.form-input:focus {
-  outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 500;
-  font-size: 0.875rem;
-  padding: 0.75rem 1rem;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-  width: 100%;
-  background: #3b82f6;
-  color: white;
-}
-.btn:hover {
-  background: #2563eb;
-}
-</style>
-</head>
-<body>
-<form method="post" action="<?php eo($_SERVER['PHP_SELF'])?>">
-  <div class="login-card">
-    <div class="login-header">
-      <h1 class="login-title">🍡 phpMochiAdmin</h1>
-      <p class="login-subtitle">Database access is protected by password</p>
-    </div>
+    global $err_msg;
     
-    <?php if ($err_msg) { ?>
-    <div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:1rem;border-radius:6px;margin-bottom:1.5rem;font-size:0.875rem;">
-      <?php eo($err_msg)?>
-    </div>
-    <?php } ?>
+    $template_data = [
+        'self' => $_SERVER['PHP_SELF'],
+        'error_message' => $err_msg
+    ];
     
-    <div class="form-group">
-      <label for="pwd" class="form-label">Password</label>
-      <input type="password" name="pwd" id="pwd" class="form-input" placeholder="Enter your password" autofocus>
-      <input type="hidden" name="login" value="1">
-    </div>
-    
-    <button type="submit" class="btn">
-      🔓 Login to Database
-    </button>
-  </div>
-</form>
-</body>
-</html>
-<?php
+    echo render_template('login', $template_data);
 }
 
 
 function print_cfg(){
- global $DB,$err_msg,$self;
- print_header();
-?>
-<center>
-<h3>DB Connection Settings</h3>
-<div class="frm">
-<label><div class="l">DB user name:</div><input type="text" name="v[user]" value="<?php eo($DB['user'])?>"></label><br>
-<label><div class="l">Password:</div><input type="password" name="v[pwd]" value=""></label><br>
-<div style="text-align:right"><a href="#" class="ajax" onclick="cfg_toggle()">advanced settings</a></div>
-<div id="cfg-adv" style="display:none;">
-<label><div class="l">DB name:</div><input type="text" name="v[db]" value="<?php eo($DB['db'])?>"></label><br>
-<label><div class="l">MySQL host:</div><input type="text" name="v[host]" value="<?php eo($DB['host'])?>"></label> <label>port: <input type="text" name="v[port]" value="<?php eo($DB['port'])?>" size="4"></label> <label>socket: <input type="text" name="v[socket]" value="<?php eo($DB['socket'])?>" size="4"></label><br>
-<label><div class="l">Charset:</div><select name="v[chset]"><option value="">- default -</option><?php echo chset_select($DB['chset'])?></select></label><br>
-<br><label for ="rmb"><input type="checkbox" name="rmb" id="rmb" value="1" checked> Remember in cookies for 30 days or until Logoff</label>
-</div>
-<div style="display:flex;gap:0.5rem;justify-content:center;margin-top:1.5rem;">
-<input type="hidden" name="savecfg" value="1">
-<button type="submit" class="btn btn-primary">💾 Apply Settings</button>
-<button type="button" class="btn btn-secondary" onclick="window.location='<?php eo($self)?>'">❌ Cancel</button>
-</div>
-</div>
-</center>
-<?php
- print_footer();
+    global $DB, $err_msg, $self;
+    
+    // Use print_header which now uses templates
+    print_header();
+    
+    // Prepare template data
+    $template_data = [
+        'user' => $DB['user'] ?? '',
+        'db' => $DB['db'] ?? '',
+        'host' => $DB['host'] ?? '',
+        'port' => $DB['port'] ?? '',
+        'socket' => $DB['socket'] ?? '',
+        'charset_options' => chset_select($DB['chset'] ?? ''),
+        'self' => $self
+    ];
+    
+    // Render config form using template
+    echo render_template('config_form', $template_data);
+    
+    // Use print_footer
+    print_footer();
 }
 
 
@@ -1597,6 +599,1038 @@ function process_login_attempt($provided_password, $expected_password) {
     return create_success_response(['message' => 'Login successful']);
 }
 
+// Ultra-simple template system using ob_start() - all templates in same file
+function render_template($template_name, $data = []) {
+    $function_name = "tpl_{$template_name}";
+    
+    if (!function_exists($function_name)) {
+        return "<!-- Template '{$template_name}' not found -->";
+    }
+    
+    return $function_name($data);
+}
+
+function tpl_layout($data) {
+    ob_start(); ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title><?= hs($data['title'] ?? 'phpMochiAdmin') ?></title>
+        <meta charset="utf-8">
+        <?= tpl_css_styles() ?>
+        <?= tpl_javascript() ?>
+    </head>
+    <body onload="after_load()">
+        <?= tpl_form_start($data) ?>
+        <?= tpl_navigation($data) ?>
+        <div class="container">
+            <?= tpl_error_message($data) ?>
+            <?= $data['content'] ?? '' ?>
+        </div>
+        <?= tpl_footer() ?>
+        </form>
+    </body>
+    </html>
+    <?php return ob_get_clean();
+}
+
+function tpl_layout_start($data) {
+    ob_start(); ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title><?= hs($data['title'] ?? 'phpMochiAdmin') ?></title>
+        <meta charset="utf-8">
+        <?= tpl_css_styles() ?>
+        <?= tpl_javascript() ?>
+    </head>
+    <body onload="after_load()">
+        <?= tpl_form_start($data) ?>
+        <?= tpl_navigation($data) ?>
+        <div class="container">
+            <?= tpl_error_message($data) ?>
+    <?php return ob_get_clean();
+}
+
+function tpl_login($data) {
+    ob_start(); ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>phpMochiAdmin Login</title>
+        <meta charset="utf-8">
+        <?= tpl_login_styles() ?>
+    </head>
+    <body>
+        <form method="post" action="<?= hs($data['self']) ?>">
+            <div class="login-card">
+                <div class="login-header">
+                    <h1 class="login-title">🍡 phpMochiAdmin</h1>
+                    <p class="login-subtitle">Database access is protected by password</p>
+                </div>
+                
+                <?= tpl_error_message($data) ?>
+                
+                <div class="form-group">
+                    <label for="pwd" class="form-label">Password</label>
+                    <input type="password" name="pwd" id="pwd" class="form-input" 
+                           placeholder="Enter your password" autofocus>
+                    <input type="hidden" name="login" value="1">
+                </div>
+                
+                <button type="submit" class="btn">
+                    🔓 Login to Database
+                </button>
+            </div>
+        </form>
+    </body>
+    </html>
+    <?php return ob_get_clean();
+}
+
+function tpl_main_interface($data) {
+    ob_start(); ?>
+    <?= tpl_query_form($data) ?>
+    <?= tpl_results_section($data) ?>
+    <?php return ob_get_clean();
+}
+
+function tpl_query_form($data) {
+    ob_start(); ?>
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">
+                SQL Query
+                <div style="float:right;display:flex;gap:0.5rem;align-items:center;">
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="q_prev()" title="Previous query">&lt;</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="q_next()" title="Next query">&gt;</button>
+                </div>
+            </h2>
+        </div>
+        
+        <div class="form-group">
+            <label for="qraw" class="form-label">SQL query (or multiple queries separated by ";"):</label>
+            <textarea id="qraw" class="form-textarea" rows="8" 
+                      placeholder="Enter your SQL query here..."><?= hs($data['sql_query'] ?? '') ?></textarea>
+            <input type="hidden" name="q" id="q" value="<?= hs(base64_encode($data['sql_query'] ?? '')) ?>">
+        </div>
+        
+        <div class="query-buttons">
+            <button type="submit" name="GoSQL" class="btn btn-primary">
+                <span>Execute Query</span>
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="$('qraw').value='';">
+                Clear
+            </button>
+            
+            <?php if ($data['has_db'] ?? false): ?>
+            <div style="margin-left:auto;display:flex;gap:0.5rem;flex-wrap:wrap;">
+                <?php foreach ($data['template_buttons'] ?? [] as $name => $template): ?>
+                <button type="button" class="btn btn-ghost btn-sm" 
+                        onclick="qtpl('<?= hs(addslashes($template)) ?>')"><?= hs(ucfirst($name)) ?></button>
+                <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php return ob_get_clean();
+}
+
+function tpl_results_section($data) {
+    if (!($data['has_results'] ?? false)) {
+        return '';
+    }
+    
+    ob_start(); ?>
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">
+                Query Results
+                <div style="float:right;display:flex;gap:1rem;align-items:center;font-size:0.875rem;font-weight:normal;">
+                    <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+                        <input type="checkbox" name="is_sm" value="1" id="is_sm" onclick="smview()" 
+                               <?= ($data['compact_view'] ?? false) ? 'checked' : '' ?>>
+                        Compact view
+                    </label>
+                    <span class="text-muted">
+                        Records: <strong><?= hs($data['record_count'] ?? 0) ?><?php 
+                        if (!is_null($data['total_count'] ?? null) && ($data['record_count'] ?? 0) < $data['total_count']) {
+                            echo ' of ' . hs($data['total_count']);
+                        } ?></strong>
+                        in <strong><?= hs($data['execution_time'] ?? '0') ?></strong> sec
+                    </span>
+                </div>
+            </h2>
+        </div>
+        
+        <?php if ($data['message'] ?? ''): ?>
+        <div class="message message-success">
+            <?= hs($data['message']) ?>
+        </div>
+        <?php endif; ?>
+        
+        <?php if ($data['content'] ?? ''): ?>
+            <?= ($data['pagination_html'] ?? '') . $data['content'] . ($data['pagination_html'] ?? '') ?>
+        <?php endif; ?>
+    </div>
+    <?php return ob_get_clean();
+}
+
+function tpl_navigation($data) {
+    ob_start(); ?>
+    <nav class="nav">
+        <div class="nav-content">
+            <a href="https://github.com/phpMochiAdmin/phpMochiAdmin" target="_blank" class="nav-brand">
+                🍡 <?= hs($data['version'] ?? 'phpMochiAdmin') ?>
+            </a>
+            <div class="nav-links">
+                <?= tpl_database_navigation($data) ?>
+                <?= tpl_utility_navigation($data) ?>
+            </div>
+        </div>
+    </nav>
+    <?php return ob_get_clean();
+}
+
+function tpl_database_navigation($data) {
+    if (!($data['is_logged'] ?? false) || !($data['has_connection'] ?? false)) {
+        return '';
+    }
+    
+    ob_start(); ?>
+    <?php if ($data['servers'] ?? []): ?>
+        <label>Servers:</label>
+        <select name="srv" onChange="frefresh()" class="nav-select">
+            <option value=''>- select/refresh -</option>
+            <?= sel($data['servers'], 'iname', $data['current_server'] ?? '') ?>
+        </select>
+    <?php endif; ?>
+    
+    <a href="?<?= hs($data['xurl'] ?? '') ?>&db=<?= ue($data['db'] ?? '') ?>&srv=<?= ue($data['current_server'] ?? '') ?>&q=<?= b64u("show processlist") ?>">⚡ Processes</a>
+    <a href="?<?= hs($data['xurl'] ?? '') ?>&q=<?= b64u("show databases") ?>">🗂️ Databases</a>
+    
+    <select name="db" onChange="frefresh()" class="nav-select">
+        <option value='*'> - select/refresh -</option>
+        <option value=''> - show all -</option>
+        <?= $data['db_options'] ?? '' ?>
+    </select>
+    
+    <?php if ($data['db'] ?? ''): ?>
+        <?php $base_url = "href='" . hs($data['self'] ?? '') . "?" . hs($data['xurl'] ?? '') . "&db=" . ue($data['db']) . "&srv=" . ue($data['current_server'] ?? ''); ?>
+        <a <?= $base_url ?>&q=<?= b64u($data['show_tables'] ?? '') ?>'">📋 Tables</a>
+        <a <?= $base_url ?>&shex=1'">📊 Export</a>
+        <a <?= $base_url ?>&shim=1'">📤 Import</a>
+    <?php endif; ?>
+    <?php return ob_get_clean();
+}
+
+function tpl_utility_navigation($data) {
+    ob_start(); ?>
+    <a href="?showcfg=1">⚙️ Settings</a>
+    <?php if ($data['is_logged'] ?? false): ?>
+        <a href="?<?= hs($data['xurl'] ?? '') ?>&logoff=1" onclick="logoff()">🚪 Logoff</a>
+    <?php endif; ?>
+    <a href="?pi=1">ℹ️ PHP Info</a>
+    <?php return ob_get_clean();
+}
+
+function tpl_error_message($data) {
+    $message = $data['error_message'] ?? '';
+    if (!$message) return '';
+    
+    ob_start(); ?>
+    <div class="message message-error" style="margin:1rem 0;">
+        <?= hs($message) ?>
+    </div>
+    <?php return ob_get_clean();
+}
+
+function tpl_form_start($data) {
+    ob_start(); ?>
+    <form method="post" name="DF" id="DF" action="<?= hs($data['self'] ?? '') ?>" enctype="multipart/form-data">
+        <input type="hidden" name="XSS" value="<?= hs($data['xss_token'] ?? '') ?>">
+        <input type="hidden" name="refresh" value="">
+        <input type="hidden" name="p" value="">
+    <?php return ob_get_clean();
+}
+
+function tpl_footer() {
+    ob_start(); ?>
+    <footer style="background:#ffffff;border-top:1px solid #e2e8f0;padding:2rem;text-align:center;color:#64748b;font-size:0.875rem;margin-top:2rem;">
+        🍡 phpMochiAdmin - Enhanced with functional programming<br>
+        Based on phpMiniAdmin &copy; 2004-2024 <a href="http://osalabs.com" target="_blank" style="color:#3b82f6;text-decoration:none;">Oleg Savchuk</a>
+    </footer>
+    <?php return ob_get_clean();
+}
+
+function tpl_css_styles() {
+    ob_start(); ?>
+    <style>
+    /* Modern ShadCN-inspired CSS for phpMochiAdmin */
+    :root{
+      --bg:#f8fafc;--text:#0f172a;--muted:#64748b;--border:#e2e8f0;
+      --card:#ffffff;--accent:#3b82f6;--accent-dark:#2563eb;--radius:6px;
+      --shadow:0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --shadow-sm:0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --success:#10b981;--warning:#f59e0b;--error:#ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
+      line-height: 1.6;
+      font-size: 14px;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+    }
+
+    /* Layout */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 1rem;
+    }
+
+    /* Navigation bar */
+    .nav {
+      background: #ffffff;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 1rem 0;
+      margin-bottom: 2rem;
+      box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+      width: 100%;
+      display: block;
+    }
+
+    .nav-content {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 1rem;
+      min-height: 60px;
+    }
+
+    .nav-brand {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: #0f172a;
+      text-decoration: none;
+      margin-right: 2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-left: auto;
+    }
+
+    .nav a {
+      color: #64748b;
+      text-decoration: none;
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      transition: all 0.2s;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    .nav a:hover {
+      color: #0f172a;
+      background: #f1f5f9;
+    }
+
+    .nav-select {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      color: #0f172a;
+      font-size: 0.875rem;
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      margin: 0 0.25rem;
+      min-width: 180px;
+      max-width: 220px;
+    }
+
+    .nav-select:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+      outline: none;
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: var(--shadow);
+    }
+
+    .card-header {
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: var(--text);
+      margin: 0;
+    }
+
+    /* Forms */
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 0.5rem;
+    }
+
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      background: var(--card);
+      color: var(--text);
+      transition: all 0.2s;
+    }
+
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    .form-textarea {
+      resize: vertical;
+      min-height: 120px;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      font-weight: 500;
+      font-size: 0.875rem;
+      padding: 0.75rem 1rem;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.2s;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-dark);
+    }
+
+    .btn-secondary {
+      background: #f3f4f6;
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: #e5e7eb;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text);
+    }
+
+    .btn-ghost:hover {
+      background: #f3f4f6;
+    }
+
+    .btn-sm {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.75rem;
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: white;
+    }
+
+    .btn-warning {
+      background: var(--warning);
+      color: white;
+    }
+
+    .btn-error {
+      background: var(--error);
+      color: white;
+    }
+
+    /* Messages */
+    .message {
+      padding: 1rem;
+      border-radius: var(--radius);
+      margin-bottom: 1rem;
+      border: 1px solid;
+    }
+
+    .message-error {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #991b1b;
+    }
+
+    .message-success {
+      background: #f0fdf4;
+      border-color: #bbf7d0;
+      color: #166534;
+    }
+
+    /* Query buttons */
+    .query-buttons {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+
+    /* Tables */
+    .table-container {
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--card);
+      margin: 1rem 0;
+      box-shadow: var(--shadow);
+    }
+
+    .table-container-inner {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+      margin: 0;
+    }
+
+    table.res {
+      width: 100%;
+    }
+    
+    table.sm {
+      font-size: 0.75rem;
+    }
+    
+    table.sm th, table.sm td {
+      padding: 0.5rem;
+    }
+
+    table.wa {
+      width: auto;
+    }
+
+    th, td {
+      padding: 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      word-wrap: break-word;
+    }
+    
+    td:first-child {
+      border-left: none;
+    }
+    
+    td:last-child {
+      border-right: none;
+    }
+
+    th {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      background: #f9fafb;
+    }
+
+    tbody tr:hover {
+      background: #f9fafb;
+    }
+
+    /* Legacy classes for compatibility */
+    tr.e {
+      background-color: #f9fafb;
+    }
+
+    tr.o {
+      background-color: white;
+    }
+
+    tr.e:hover, tr.o:hover {
+      background-color: #eff6ff;
+    }
+
+    tr.h {
+      background-color: #dbeafe;
+    }
+
+    tr.s {
+      background-color: #fef3c7;
+    }
+
+    /* Table actions specific styling */
+    .table-actions {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-top: none;
+      border-radius: 0 0 var(--radius) var(--radius);
+    }
+
+    .table-actions-content {
+      padding: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .table-actions-buttons {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .table-actions-label {
+      color: var(--muted);
+      font-size: 0.875rem;
+      white-space: nowrap;
+    }
+
+    .table-actions .btn {
+      box-shadow: var(--shadow-sm);
+    }
+
+    .table-container-inner {
+      border-radius: var(--radius) var(--radius) 0 0;
+      overflow: hidden;
+    }
+
+    /* Database/table link styling */
+    td a {
+      color: var(--accent);
+      text-decoration: none;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      transition: background-color 0.2s;
+      display: inline-block;
+      font-size: 0.75rem;
+      margin: 0.125rem;
+    }
+
+    td a:hover {
+      background-color: #eff6ff;
+      text-decoration: none;
+    }
+    
+    /* Table cell special formatting */
+    td i {
+      color: var(--muted);
+      font-style: italic;
+    }
+    
+    /* Binary/long text indicator */
+    td .binary {
+      background: #f3f4f6;
+      color: #6b7280;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-family: monospace;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .nav-content {
+        flex-direction: column;
+        gap: 1rem;
+      }
+      
+      .nav-links {
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      
+      .nav-brand {
+        margin-right: 0;
+        margin-bottom: 0.5rem;
+      }
+      
+      .container {
+        padding: 0.5rem;
+      }
+      
+      .card {
+        padding: 1rem;
+      }
+      
+      .query-buttons {
+        flex-direction: column;
+      }
+    }
+    </style>
+    <?php return ob_get_clean();
+}
+
+function tpl_login_styles() {
+    ob_start(); ?>
+    <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .login-card {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 2rem;
+      width: 400px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .login-header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .login-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #0f172a;
+      margin: 0 0 0.5rem;
+    }
+    .login-subtitle {
+      color: #64748b;
+      font-size: 0.875rem;
+      margin: 0;
+    }
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+    .form-label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: #0f172a;
+      margin-bottom: 0.5rem;
+    }
+    .form-input {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      background: white;
+      color: #0f172a;
+      box-sizing: border-box;
+    }
+    .form-input:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 500;
+      font-size: 0.875rem;
+      padding: 0.75rem 1rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+      width: 100%;
+      background: #3b82f6;
+      color: white;
+    }
+    .btn:hover {
+      background: #2563eb;
+    }
+    .message {
+      padding: 1rem;
+      border-radius: 6px;
+      margin-bottom: 1.5rem;
+      border: 1px solid;
+    }
+    .message-error {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #991b1b;
+      font-size: 0.875rem;
+    }
+    </style>
+    <?php return ob_get_clean();
+}
+
+function tpl_javascript() {
+    ob_start(); ?>
+    <script type="text/javascript">
+    var LSK='pma_',LSKX=LSK+'max',LSKM=LSK+'min',qcur=0,LSMAX=32;
+
+    function $(i){return document.getElementById(i)}
+    function frefresh(){
+     var F=document.DF;
+     F.method='get';
+     F.refresh.value="1";
+     F.GoSQL.click();
+    }
+    function go(p,sql){
+     var F=document.DF;
+     F.p.value=p;
+     if(sql)F.q.value=sql;
+     F.GoSQL.click();
+    }
+    function ays(){
+     return confirm('Are you sure to continue?');
+    }
+    function chksql(){
+     var F=document.DF,v=F.qraw.value;
+     if(/^\s*(?:delete|drop|truncate|alter)/.test(v)) if(!ays())return false;
+     if(lschk(1)){
+      var lsm=lsmax()+1,ls=localStorage;
+      ls[LSK+lsm]=v;
+      ls[LSKX]=lsm;
+      if(!ls[LSKM])ls[LSKM]=1;
+      var lsmin=parseInt(ls[LSKM]);
+      if((lsm-lsmin+1)>LSMAX){
+       lsclean(lsmin,lsm-LSMAX);
+      }
+     }
+     return true;
+    }
+    function lschk(skip){
+     if (!localStorage || !skip && !localStorage[LSKX]) return false;
+     return true;
+    }
+    function lsmax(){
+     var ls=localStorage;
+     if(!lschk() || !ls[LSKX])return 0;
+     return parseInt(ls[LSKX]);
+    }
+    function lsclean(from,to){
+     ls=localStorage;
+     for(var i=from;i<=to;i++){
+      delete ls[LSK+i];ls[LSKM]=i+1;
+     }
+    }
+    function q_prev(){
+     var ls=localStorage;
+     if(!lschk())return;
+     qcur--;
+     var x=parseInt(ls[LSKM]);
+     if(qcur<x)qcur=x;
+     $('qraw').value=ls[LSK+qcur];
+    }
+    function q_next(){
+     var ls=localStorage;
+     if(!lschk())return;
+     qcur++;
+     var x=parseInt(ls[LSKX]);
+     if(qcur>x)qcur=x;
+     $('qraw').value=ls[LSK+qcur];
+    }
+    function after_load(){
+     var F=document.DF;
+     var p=F['v[pwd]'];
+     if (p) p.focus();
+     qcur=lsmax();
+
+     F.addEventListener('submit',function(e){
+      if(!F.qraw)return;
+      if(!chksql()){e.preventDefault();return}
+      $('q').value=btoa(encodeURIComponent($('qraw').value).replace(/%([0-9A-F]{2})/g,function(m,p){return String.fromCharCode('0x'+p)}));
+     });
+     var res=$('res');
+     if(res)res.addEventListener('dblclick',function(e){
+      if(!$('is_sm').checked)return;
+      var el=e.target;
+      if(el.tagName!='TD')el=el.parentNode;
+      if(el.tagName!='TD')return;
+      if(el.className.match(/\b\lg\b/))el.className=el.className.replace(/\blg\b/,' ');
+      else el.className+=' lg';
+     });
+    }
+    function logoff(){
+     if(lschk()){
+      var ls=localStorage;
+      var from=parseInt(ls[LSKM]),to=parseInt(ls[LSKX]);
+      for(var i=from;i<=to;i++){
+       delete ls[LSK+i];
+      }
+      delete ls[LSKM];delete ls[LSKX];
+     }
+    }
+    function cfg_toggle(){
+     var e=$('cfg-adv');
+     e.style.display=e.style.display=='none'?'':'none';
+    }
+    function qtpl(s){
+     $('qraw').value=s.replace(/%T/g,"`<?php eo(($_REQUEST['t']??0)?b64d($_REQUEST['t']):'tablename')?>`");
+    }
+    function smview(){
+     if($('is_sm').checked){$('res').className+=' sm'}else{$('res').className = $('res').className.replace(/\bsm\b/,' ')}
+    }
+    </script>
+    <?php return ob_get_clean();
+}
+
+// Templates for table rendering components
+function tpl_table_row($data) {
+    ob_start(); ?>
+    <tr class="<?= hs($data['row_class']) ?>" onclick="tc(this)">
+        <?= $data['content'] ?>
+    </tr>
+    <?php return ob_get_clean();
+}
+
+function tpl_show_tables_row($data) {
+    ob_start(); ?>
+    <td><input type='checkbox' name='cb[]' value="<?= hs($data['table_quoted']) ?>"></td>
+    <td><a href="<?= hs($data['table_url']) ?>"><?= hs($data['table_name']) ?></a></td>
+    <td><?= hs($data['engine']) ?></td>
+    <td align='right'><?= hs($data['rows']) ?></td>
+    <td align='right'><?= hs($data['data_size']) ?></td>
+    <td align='right'><?= hs($data['index_size']) ?></td>
+    <td><?= $data['actions'] ?></td>
+    <td><?= hs($data['comment']) ?></td>
+    <?php return ob_get_clean();
+}
+
+function tpl_show_databases_row($data) {
+    ob_start(); ?>
+    <td><a href="<?= hs($data['db_url']) ?>"><?= hs($data['db_name']) ?></a></td>
+    <?php foreach ($data['actions'] as $action): ?>
+    <td><?= $action ?></td>
+    <?php endforeach; ?>
+    <?php return ob_get_clean();
+}
+
+function tpl_regular_row($data) {
+    ob_start(); ?>
+    <?php foreach ($data['cells'] as $cell): ?>
+    <td><div><?= $cell ?><?= empty($cell) ? "<br>" : '' ?></div></td>
+    <?php endforeach; ?>
+    <?php return ob_get_clean();
+}
+
+function tpl_table_action_link($data) {
+    ob_start(); ?>
+    &#183;<a href="<?= hs($data['url']) ?>&q=<?= hs($data['encoded_query']) ?>"<?= $data['onclick'] ?>><?= hs($data['text']) ?></a>
+    <?php return ob_get_clean();
+}
+
+function tpl_export_link($data) {
+    ob_start(); ?>
+    &#183;<a href="<?= hs($data['url']) ?>&shex=1&rt=<?= hs($data['table_name_encoded']) ?>">export</a>
+    <?php return ob_get_clean();
+}
+
+function tpl_table_headers($data) {
+    ob_start(); ?>
+    <tr class="h">
+        <?php if ($data['show_checkbox']): ?>
+        <th><input type="checkbox" onclick="chkall(this)"></th>
+        <?php endif; ?>
+        <?php foreach ($data['headers'] as $header): ?>
+        <th><?= hs($header) ?></th>
+        <?php endforeach; ?>
+        <?php if ($data['show_actions']): ?>
+        <th>Actions</th>
+        <?php endif; ?>
+    </tr>
+    <?php return ob_get_clean();
+}
+
+function tpl_info_card($data) {
+    ob_start(); ?>
+    <div class="server-info-card">
+        <div class="server-info-title">
+            <?= $data['icon'] ?> <?= hs($data['title']) ?>
+        </div>
+        <div class="server-info-links">
+            <?php foreach ($data['links'] as $link): ?>
+            <a href="<?= hs($link['url']) ?>" class="server-link">
+                <?= $link['icon'] ?> <?= hs($link['text']) ?>
+            </a>
+            <?php endforeach; ?>
+        </div>
+        <?php if ($data['database_info']): ?>
+        <div class="database-info">
+            <span class="database-label">Current Database:</span>
+            <?= hs($data['database_info']) ?>
+        </div>
+        <?php endif; ?>
+    </div>
+    <?php return ob_get_clean();
+}
+
+function tpl_table_actions_section($data) {
+    ob_start(); ?>
+    </div><div class="table-actions">
+        <div class="table-actions-content">
+            <div class="table-actions-buttons">
+                <?php foreach ($data['actions'] as $action): ?>
+                <button type="submit" class="btn btn-sm <?= hs($action['class']) ?>" 
+                        onclick="<?php if ($action['confirm'] ?? false): ?>if(ays()){sht('<?= hs($action['action']) ?>')}else{return false}<?php else: ?>sht('<?= hs($action['action']) ?>')<?php endif; ?>">
+                    <?= hs($action['text']) ?>
+                </button>
+                <?php endforeach; ?>
+            </div>
+            <span class="table-actions-label"><strong>selected tables</strong></span>
+        </div>
+        <div class='table-container-inner'>
+        <input type='hidden' name='dosht' value=''>
+    <?php return ob_get_clean();
+}
+
 // Pure functions for table rendering - much cleaner than the horrible display_select!
 function detect_query_type($query) {
     return [
@@ -1634,13 +1668,23 @@ function format_cell_value($value, $is_show_create = false) {
 }
 
 function create_table_action_link($url, $query, $text, $confirm = false) {
-    $encoded_query = b64u($query);
-    $onclick = $confirm ? " onclick='return ays()'" : "";
-    return "&#183;<a href=\"{$url}&q={$encoded_query}\"{$onclick}>{$text}</a>";
+    $template_data = [
+        'url' => $url,
+        'encoded_query' => b64u($query),
+        'text' => $text,
+        'onclick' => $confirm ? " onclick='return ays()'" : ""
+    ];
+    
+    return render_template('table_action_link', $template_data);
 }
 
 function create_export_link($url, $table_name) {
-    return "&#183;<a href=\"{$url}&shex=1&rt=" . hs(ue($table_name)) . "\">export</a>";
+    $template_data = [
+        'url' => $url,
+        'table_name_encoded' => ue($table_name)
+    ];
+    
+    return render_template('export_link', $template_data);
 }
 
 function render_table_row_actions($url, $table_name, $table_quoted) {
@@ -1667,30 +1711,35 @@ function render_database_row_actions($url, $db_name, $db_quoted) {
 }
 
 function create_table_headers($query_type, $field_names) {
-    $headers = "<tr class='h'>";
-    
-    if ($query_type['is_show_tables']) {
-        $headers .= "<td><input type='checkbox' name='cball' value='' onclick='chkall(this)'></td>";
-    }
+    $show_checkbox = $query_type['is_show_tables'];
+    $headers = [];
     
     // Add main field headers
     foreach ($field_names as $name) {
         if ($query_type['is_show_tables'] && array_search($name, $field_names) > 0) {
             break; // Only show first field for show tables
         }
-        $headers .= "<th><div>" . hs($name) . "</div></th>";
+        $headers[] = $name;
     }
     
-    // Add action headers
+    // Add action headers based on query type
     if ($query_type['is_show_databases']) {
-        $headers .= "<th>show create database</th><th>show table status</th><th>show triggers</th>";
+        $headers = array_merge($headers, ['show create database', 'show table status', 'show triggers']);
+        $show_actions = false;
     } elseif ($query_type['is_show_tables']) {
-        $headers .= "<th>engine</th><th>~rows</th><th>data size</th><th>index size</th>";
-        $headers .= "<th>show create table</th><th>explain</th><th>indexes</th><th>export</th>";
-        $headers .= "<th>drop</th><th>truncate</th><th>optimize</th><th>repair</th><th>comment</th>";
+        $headers = array_merge($headers, ['engine', '~rows', 'data size', 'index size', 'show create table', 'explain', 'indexes', 'export', 'drop', 'truncate', 'optimize', 'repair', 'comment']);
+        $show_actions = false;
+    } else {
+        $show_actions = false;
     }
     
-    return $headers . "</tr>\n";
+    $template_data = [
+        'show_checkbox' => $show_checkbox,
+        'headers' => $headers,
+        'show_actions' => $show_actions
+    ];
+    
+    return render_template('table_headers', $template_data);
 }
 
 function create_info_card($query_type, $config) {
@@ -1698,30 +1747,27 @@ function create_info_card($query_type, $config) {
         return '';
     }
     
-    $card = "<div class='server-info-card'>";
-    $card .= "<h3 class='server-info-title'>🖥️ MySQL Server</h3>";
-    $card .= "<div class='server-info-links'>";
-    
     $base_url = "?{$config['xurl']}&db={$config['db']}&srv={$config['srv']}";
     
-    $card .= "<a href='{$base_url}&q=" . b64u("show variables") . "' class='server-link'>⚙️ Configuration Variables</a>";
-    $card .= "<a href='{$base_url}&q=" . b64u("show status") . "' class='server-link'>📊 Statistics</a>";
-    $card .= "<a href='{$base_url}&q=" . b64u("show processlist") . "' class='server-link'>⚡ Process List</a>";
-    $card .= "</div>";
+    $links = [
+        ['url' => $base_url . "&q=" . b64u("show variables"), 'icon' => '⚙️', 'text' => 'Configuration Variables'],
+        ['url' => $base_url . "&q=" . b64u("show status"), 'icon' => '📊', 'text' => 'Statistics'],
+        ['url' => $base_url . "&q=" . b64u("show processlist"), 'icon' => '⚡', 'text' => 'Process List']
+    ];
     
-    if ($query_type['is_show_databases']) {
-        $card .= "<div style='margin:1rem 0;display:flex;gap:0.5rem;align-items:center;'>";
-        $card .= "<label style='display:flex;gap:0.5rem;align-items:center;color:var(--muted);font-size:0.875rem;'>";
-        $card .= "Create new database: <input type='text' name='new_db' placeholder='database name' class='form-input' style='width:200px;'>";
-        $card .= "</label> <button type='submit' name='crdb' class='btn btn-primary btn-sm'>✨ Create</button></div>";
-    }
-    
+    $database_info = null;
     if ($query_type['is_show_tables']) {
-        $card .= "<div class='database-info'><span class='database-label'>Database:</span>";
-        $card .= " <a href='{$base_url}&q=" . b64u("show table status") . "' class='server-link'>📋 Table Status</a></div>";
+        $database_info = $config['db'];
     }
     
-    return $card . "</div>";
+    $template_data = [
+        'icon' => '🖥️',
+        'title' => 'MySQL Server',
+        'links' => $links,
+        'database_info' => $database_info
+    ];
+    
+    return render_template('info_card', $template_data);
 }
 
 function create_table_actions_section($query_type) {
@@ -1729,18 +1775,42 @@ function create_table_actions_section($query_type) {
         return '';
     }
     
-    return "</div><div class='table-actions'>
-        <div class='table-actions-content'>
-            <div class='table-actions-buttons'>
-                <button type='submit' class='btn btn-primary btn-sm' onclick=\"sht('exp')\">📊 Export</button>
-                <button type='submit' class='btn btn-error btn-sm' onclick=\"if(ays()){sht('drop')}else{return false}\">🗑️ Drop</button>
-                <button type='submit' class='btn btn-warning btn-sm' onclick=\"if(ays()){sht('trunc')}else{return false}\">✂️ Truncate</button>
-                <button type='submit' class='btn btn-success btn-sm' onclick=\"sht('opt')\">⚡ Optimize</button>
-            </div>
-            <span class='table-actions-label'><strong>selected tables</strong></span>
+    $template_data = [
+        'actions' => [
+            ['action' => 'exp', 'text' => '📊 Export', 'class' => 'btn-primary'],
+            ['action' => 'drop', 'text' => '🗑️ Drop', 'class' => 'btn-error', 'confirm' => true],
+            ['action' => 'trunc', 'text' => '✂️ Truncate', 'class' => 'btn-warning', 'confirm' => true],
+            ['action' => 'opt', 'text' => '⚡ Optimize', 'class' => 'btn-success']
+        ]
+    ];
+    
+    return render_template('table_actions_section', $template_data);
+}
+
+function tpl_config_form($data) {
+    ob_start(); ?>
+    <center>
+    <h3>DB Connection Settings</h3>
+    <div class="frm">
+        <label><div class="l">DB user name:</div><input type="text" name="v[user]" value="<?= hs($data['user']) ?>"></label><br>
+        <label><div class="l">Password:</div><input type="password" name="v[pwd]" value=""></label><br>
+        <div style="text-align:right"><a href="#" class="ajax" onclick="cfg_toggle()">advanced settings</a></div>
+        <div id="cfg-adv" style="display:none;">
+            <label><div class="l">DB name:</div><input type="text" name="v[db]" value="<?= hs($data['db']) ?>"></label><br>
+            <label><div class="l">MySQL host:</div><input type="text" name="v[host]" value="<?= hs($data['host']) ?>"></label> 
+            <label>port: <input type="text" name="v[port]" value="<?= hs($data['port']) ?>" size="4"></label> 
+            <label>socket: <input type="text" name="v[socket]" value="<?= hs($data['socket']) ?>" size="4"></label><br>
+            <label><div class="l">Charset:</div><select name="v[chset]"><option value="">- default -</option><?= $data['charset_options'] ?></select></label><br>
+            <br><label for="rmb"><input type="checkbox" name="rmb" id="rmb" value="1" checked> Remember in cookies for 30 days or until Logoff</label>
         </div>
-        <div class='table-container-inner'>
-        <input type='hidden' name='dosht' value=''>";
+        <div style="display:flex;gap:0.5rem;justify-content:center;margin-top:1.5rem;">
+            <input type="hidden" name="savecfg" value="1">
+            <button type="submit" class="btn btn-primary">💾 Apply Settings</button>
+            <button type="button" class="btn btn-secondary" onclick="window.location='<?= hs($data['self']) ?>'">❌ Cancel</button>
+        </div>
+    </div>
+    </center>
+    <?php return ob_get_clean();
 }
 
 // Database operation helpers - functional approach
