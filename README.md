@@ -1,16 +1,12 @@
 # PHPMochiAdmin
 
-A enhanced derivative of the excellent [phpMiniAdmin](http://phpminiadmin.sourceforge.net/) project, designed to provide an even better database administration experience while maintaining the lightweight, single-file philosophy that makes phpMiniAdmin so great.
+An enhanced fork of [phpMiniAdmin](http://phpminiadmin.sourceforge.net/) with improved code quality and modern design while maintaining its lightweight, single-file philosophy.
 
 ![Logo](assets/logo.png)
 
-## About This Project
+## About
 
-PHPMochiAdmin builds upon the solid foundation of phpMiniAdmin, created by [Oleg Savchuk](https://github.com/osalabs). We deeply appreciate the original work and continue to honor the same dual licensing (GPL v2 and MIT) that makes phpMiniAdmin accessible to everyone.
-
-### What Makes PHPMochiAdmin Special
-
-This project extends phpMiniAdmin with additional features and improvements while preserving the core principle of being a lightweight, standalone PHP script for quick and easy MySQL database access.
+PHPMochiAdmin extends phpMiniAdmin by Oleg Savchuk with functional programming patterns, template system, and better security practices. It remains a standalone PHP script for MySQL database administration.
 
 ## Installation
 
