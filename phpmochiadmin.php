@@ -2,24 +2,7 @@
 /*
  phpMochiAdmin - Enhanced MySQL Database Administration Tool
  Based on PHP Mini MySQL Admin by Oleg Savchuk
- (c) 2004-2024 Oleg Savchuk <osalabs@gmail.com> http://osalabs.com
- Enhanced with functional programming patterns and improved security
 
- A lightweight, secure, and modern PHP script for MySQL database administration.
- Features enhanced security, functional programming architecture, and improved UI.
- 
- Original project: http://phpminiadmin.sourceforge.net
- Enhanced version: phpMochiAdmin with functional programming improvements
-
- Dual licensed: GPL v2 and MIT, see texts at http://opensource.org/licenses/
- 
- Key Improvements in phpMochiAdmin:
- - Functional programming patterns for better maintainability
- - Enhanced security with input validation and CSRF protection
- - Pure functions for HTML generation and data processing
- - Improved error handling with consistent response patterns
- - Modern UI components with better accessibility
- - Comprehensive input sanitization and SQL injection prevention
 */
 
 // CRITICAL SECURITY SETTING: Set a strong password to protect database access
@@ -76,46 +59,15 @@ error_reporting(E_ALL ^ E_NOTICE);
 
 file_exists($f=dirname(__FILE__) . '/phpminiconfig.php')&&require($f); // Read from config (easier to update/override)
 
-// Security improvement: Rate limiting for login attempts
-if(isset($_REQUEST['login'])){
-    // Initialize login attempt tracking
-    if (!isset($_SESSION['login_attempts'])) {
-        $_SESSION['login_attempts'] = 0;
-        $_SESSION['last_attempt_time'] = time();
-    }
+// Security improvement: Clean functional login handling
+if (isset($_REQUEST['login'])) {
+    $provided_password = $_REQUEST['pwd'] ?? '';
+    $login_result = process_login_attempt($provided_password, $ACCESS_PWD);
     
-    // Reset attempts counter after 15 minutes
-    if (time() - $_SESSION['last_attempt_time'] > 900) {
-        $_SESSION['login_attempts'] = 0;
-    }
-    
-    // Check if too many failed attempts (max 5 attempts per 15 minutes)
-    if ($_SESSION['login_attempts'] >= 5) {
-        $remaining_time = 900 - (time() - $_SESSION['last_attempt_time']);
-        $err_msg = "Too many failed login attempts. Please wait " . ceil($remaining_time/60) . " minutes before trying again.";
+    if (!$login_result['success']) {
+        $err_msg = $login_result['error'];
     } else {
-        // Validate password
-        $provided_pwd = $_REQUEST['pwd'] ?? '';
-        
-        // Use hash_equals for timing-attack safe comparison when both passwords are not empty
-        $passwords_match = false;
-        if (!empty($ACCESS_PWD) && !empty($provided_pwd)) {
-            $passwords_match = hash_equals($ACCESS_PWD, $provided_pwd);
-        } else {
-            $passwords_match = ($provided_pwd === $ACCESS_PWD);
-        }
-        
-        if (!$passwords_match) {
-            // Increment failed attempts counter
-            $_SESSION['login_attempts']++;
-            $_SESSION['last_attempt_time'] = time();
-            $err_msg = "Invalid password. Try again. (" . (5 - $_SESSION['login_attempts']) . " attempts remaining)";
-        } else {
-            // Successful login - reset attempts counter
-            $_SESSION['login_attempts'] = 0;
-            $_SESSION['is_logged'] = true;
-            loadcfg();
-        }
+        loadcfg();
     }
 }
 
@@ -386,7 +338,7 @@ function print_header(){
 <head><title>phpMochiAdmin</title>
 <meta charset="utf-8">
 <style>
-/* Modern ShadCN-inspired CSS for phpminiadmin */
+/* Modern CSS */
 :root{
   --bg:#f8fafc;--text:#0f172a;--muted:#64748b;--border:#e2e8f0;
   --card:#ffffff;--accent:#3b82f6;--accent-dark:#2563eb;--radius:6px;
@@ -1548,6 +1500,84 @@ function create_error_response($message, $log_context = []) {
 
 function create_success_response($data = []) {
     return array_merge(['success' => true, 'error' => null], $data);
+}
+
+// Pure functions for login attempt management
+function initialize_login_tracking() {
+    if (!isset($_SESSION['login_attempts'])) {
+        $_SESSION['login_attempts'] = 0;
+        $_SESSION['last_attempt_time'] = time();
+    }
+}
+
+function should_reset_login_attempts($last_attempt_time, $reset_window = 900) {
+    return (time() - $last_attempt_time) > $reset_window;
+}
+
+function is_rate_limited($attempts, $max_attempts = 5) {
+    return $attempts >= $max_attempts;
+}
+
+function calculate_remaining_lockout_time($last_attempt_time, $lockout_duration = 900) {
+    return $lockout_duration - (time() - $last_attempt_time);
+}
+
+function validate_login_password($provided_password, $expected_password) {
+    if (empty($expected_password) && empty($provided_password)) {
+        return true;
+    }
+    
+    if (empty($expected_password) || empty($provided_password)) {
+        return false;
+    }
+    
+    return hash_equals($expected_password, $provided_password);
+}
+
+function create_rate_limit_message($remaining_time) {
+    $minutes = ceil($remaining_time / 60);
+    return "Too many failed login attempts. Please wait {$minutes} minutes before trying again.";
+}
+
+function create_failed_login_message($remaining_attempts) {
+    return "Invalid password. Try again. ({$remaining_attempts} attempts remaining)";
+}
+
+function reset_login_attempts() {
+    $_SESSION['login_attempts'] = 0;
+}
+
+function increment_login_attempts() {
+    $_SESSION['login_attempts']++;
+    $_SESSION['last_attempt_time'] = time();
+}
+
+function process_login_attempt($provided_password, $expected_password) {
+    initialize_login_tracking();
+    
+    // Reset attempts if window has expired
+    if (should_reset_login_attempts($_SESSION['last_attempt_time'])) {
+        reset_login_attempts();
+    }
+    
+    // Check rate limiting
+    if (is_rate_limited($_SESSION['login_attempts'])) {
+        $remaining_time = calculate_remaining_lockout_time($_SESSION['last_attempt_time']);
+        return create_error_response(create_rate_limit_message($remaining_time));
+    }
+    
+    // Validate password
+    if (!validate_login_password($provided_password, $expected_password)) {
+        increment_login_attempts();
+        $remaining_attempts = 5 - $_SESSION['login_attempts'];
+        return create_error_response(create_failed_login_message($remaining_attempts));
+    }
+    
+    // Successful login
+    reset_login_attempts();
+    $_SESSION['is_logged'] = true;
+    
+    return create_success_response(['message' => 'Login successful']);
 }
 
 // Database operation helpers - functional approach
