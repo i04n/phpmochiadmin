@@ -115,69 +115,158 @@ if ($isRefresh && $DB['db'] && preg_match('/^show/',$SQLq) ) $SQLq=$SHOW_T;
 
 if (db_connect('nodie')){
   $time_start=microtime_float();
-
-  if ($_REQUEST['pi']??0){
-    ob_start();phpinfo();$html=ob_get_clean();preg_match("/<body[^>]*>(.*?)<\/body>/is",$html,$m);
-    $sqldr='<div class="pi">'.$m[1].'</div>';
-  }else{
-   if ($DB['db']){
-    if ($_REQUEST['shex']??0){
-     print_export();
-    }elseif ($_REQUEST['doex']??0){
-     check_xss();do_export();
-    }elseif ($_REQUEST['shim']??0){
-     print_import();
-    }elseif ($_REQUEST['doim']??0){
-     check_xss();do_import();
-    }elseif ($_REQUEST['dosht']??0){
-     check_xss();do_sht();
-    }elseif (!$isRefresh || preg_match('/^select|with|show|explain|desc/i',$SQLq) ){
-     if ($SQLq)check_xss();
-     do_sql($SQLq);#perform non-select SQL only if not refresh (to avoid dangerous delete/drop)
-    }
-   }else{
-    if ( $isRefresh ){
-       check_xss();do_sql($SHOW_D);
-    }elseif ($_REQUEST['crdb']??0){
-      check_xss();
-      
-      // Security improvement: Use validation function for database creation
-      $new_db = trim($_REQUEST['new_db'] ?? '');
-      $validation = validate_database_name($new_db);
-      
-      if (!$validation['valid']) {
-          $err_msg = $validation['error'];
-      } else {
-          try {
-              // Use the improved dbqid() function which now validates input
-              do_sql('CREATE DATABASE '.dbqid($new_db));
-              do_sql($SHOW_D);
-          } catch (Exception $e) {
-              $err_msg = "Invalid database name: " . htmlspecialchars($new_db);
-          }
-      }
-    }elseif ( preg_match('/^(?:show\s+(?:databases|status|variables|process)|create\s+database|grant\s+)/i',$SQLq) ){
-       check_xss();
-       
-       // Security improvement: Use validation function for SQL queries
-       $validation = validate_sql_query($SQLq);
-       
-       if (!$validation['valid']) {
-           $err_msg = $validation['error'];
-       } else {
-           do_sql($SQLq);
-       }
-    }else{
-       $err_msg="Select Database first";
-       if (!$SQLq) do_sql($SHOW_D);
-    }
-   }
-  }
+  
+  // Functional router - clean and simple
+  $response = route_request($_REQUEST, $DB, $SQLq, $isRefresh);
+  
   $time_all=ceil((microtime_float()-$time_start)*10000)/10000;
-
   print_screen();
 }else{
   print_cfg();
+}
+
+// =====================================================================
+// FUNCTIONAL ROUTER SYSTEM - Laravel/CodeIgniter inspired but functional
+// =====================================================================
+
+/**
+ * Main router - determines which handler to call based on request
+ */
+function route_request($request, $db, $sql_query, $is_refresh) {
+    // Define routes with their conditions and handlers (PHP 7.0+ compatible)
+    $routes = [
+        'phpinfo' => ['condition' => 'pi', 'handler' => 'handle_phpinfo'],
+        'export_show' => ['condition' => 'shex', 'handler' => 'handle_export_show'],
+        'export_do' => ['condition' => 'doex', 'handler' => 'handle_export_do'],
+        'import_show' => ['condition' => 'shim', 'handler' => 'handle_import_show'],
+        'import_do' => ['condition' => 'doim', 'handler' => 'handle_import_do'],
+        'show_tables' => ['condition' => 'dosht', 'handler' => 'handle_show_tables'],
+        'create_db' => ['condition' => 'crdb', 'handler' => 'handle_create_database'],
+        'sql_query' => ['condition' => null, 'handler' => 'handle_sql_query'] // fallback
+    ];
+    
+    // Route resolution (PHP 7.0+ compatible)
+    foreach ($routes as $route_name => $route) {
+        $condition_key = $route['condition'];
+        
+        // Check if condition matches (null means fallback route)
+        if ($condition_key === null || isset($request[$condition_key])) {
+            return call_user_func($route['handler'], $request, $db, $sql_query, $is_refresh);
+        }
+    }
+    
+    return ['status' => 'no_route'];
+}
+
+/**
+ * Route handlers - clean, functional, single responsibility
+ */
+function handle_phpinfo($request, $db, $sql_query, $is_refresh) {
+    global $sqldr;
+    ob_start();
+    phpinfo();
+    $html = ob_get_clean();
+    preg_match("/<body[^>]*>(.*?)<\/body>/is", $html, $m);
+    $sqldr = '<div class="pi">' . $m[1] . '</div>';
+    return ['status' => 'success', 'type' => 'phpinfo'];
+}
+
+function handle_export_show($request, $db, $sql_query, $is_refresh) {
+    if (!$db['db']) return handle_no_database($request, $db, $sql_query, $is_refresh);
+    print_export();
+    return ['status' => 'success', 'type' => 'export_show'];
+}
+
+function handle_export_do($request, $db, $sql_query, $is_refresh) {
+    if (!$db['db']) return handle_no_database($request, $db, $sql_query, $is_refresh);
+    check_xss();
+    do_export();
+    return ['status' => 'success', 'type' => 'export_do'];
+}
+
+function handle_import_show($request, $db, $sql_query, $is_refresh) {
+    if (!$db['db']) return handle_no_database($request, $db, $sql_query, $is_refresh);
+    print_import();
+    return ['status' => 'success', 'type' => 'import_show'];
+}
+
+function handle_import_do($request, $db, $sql_query, $is_refresh) {
+    if (!$db['db']) return handle_no_database($request, $db, $sql_query, $is_refresh);
+    check_xss();
+    do_import();
+    return ['status' => 'success', 'type' => 'import_do'];
+}
+
+function handle_show_tables($request, $db, $sql_query, $is_refresh) {
+    if (!$db['db']) return handle_no_database($request, $db, $sql_query, $is_refresh);
+    check_xss();
+    do_sht();
+    return ['status' => 'success', 'type' => 'show_tables'];
+}
+
+function handle_create_database($request, $db, $sql_query, $is_refresh) {
+    global $err_msg, $SHOW_D;
+    
+    check_xss();
+    $new_db = trim($request['new_db'] ?? '');
+    $validation = validate_database_name($new_db);
+    
+    if (!$validation['valid']) {
+        $err_msg = $validation['error'];
+        return ['status' => 'error', 'message' => $validation['error']];
+    }
+    
+    try {
+        do_sql('CREATE DATABASE ' . dbqid($new_db));
+        do_sql($SHOW_D);
+        return ['status' => 'success', 'type' => 'create_database'];
+    } catch (Exception $e) {
+        $err_msg = "Invalid database name: " . htmlspecialchars($new_db);
+        return ['status' => 'error', 'message' => $err_msg];
+    }
+}
+
+function handle_sql_query($request, $db, $sql_query, $is_refresh) {
+    global $err_msg, $SHOW_D;
+    
+    if ($db['db']) {
+        // Database selected - handle SQL queries
+        if (!$is_refresh || preg_match('/^select|with|show|explain|desc/i', $sql_query)) {
+            if ($sql_query) check_xss();
+            do_sql($sql_query);
+            return ['status' => 'success', 'type' => 'sql_query'];
+        }
+    } else {
+        // No database selected
+        if ($is_refresh) {
+            check_xss();
+            do_sql($SHOW_D);
+            return ['status' => 'success', 'type' => 'show_databases'];
+        } elseif (preg_match('/^(?:show\s+(?:databases|status|variables|process)|create\s+database|grant\s+)/i', $sql_query)) {
+            check_xss();
+            $validation = validate_sql_query($sql_query);
+            
+            if (!$validation['valid']) {
+                $err_msg = $validation['error'];
+                return ['status' => 'error', 'message' => $validation['error']];
+            }
+            
+            do_sql($sql_query);
+            return ['status' => 'success', 'type' => 'sql_query'];
+        } else {
+            $err_msg = "Select Database first";
+            if (!$sql_query) do_sql($SHOW_D);
+            return ['status' => 'error', 'message' => 'No database selected'];
+        }
+    }
+    
+    return ['status' => 'success', 'type' => 'default'];
+}
+
+function handle_no_database($request, $db, $sql_query, $is_refresh) {
+    global $err_msg;
+    $err_msg = "Select Database first";
+    return ['status' => 'error', 'message' => 'No database selected'];
 }
 
 function print_screen(){
@@ -204,7 +293,7 @@ function print_screen(){
 }
 
 function print_footer(){
-    echo render_template('footer', []);
+    echo tpl_footer();
 }
 
 function do_sql($q){
@@ -851,6 +940,59 @@ function tpl_form_start($data) {
         <input type="hidden" name="XSS" value="<?= hs($data['xss_token'] ?? '') ?>">
         <input type="hidden" name="refresh" value="">
         <input type="hidden" name="p" value="">
+    <?php return ob_get_clean();
+}
+
+function tpl_export_form($data) {
+    ob_start(); ?>
+    <center>
+    <h3>Export <?= hs($data['export_label']) ?></h3>
+    <div class="frm">
+    <input type="checkbox" name="s" value="1" checked> Structure<br>
+    <input type="checkbox" name="d" value="1" checked> Data<br><br>
+    <div><label><input type="radio" name="et" value="" checked> .sql</label>&nbsp;</div>
+    <div>
+    <?php if ($data['show_csv_option']): ?>
+     <label><input type="radio" name="et" value="csv"> .csv (Excel style, data only and for one table only)</label>
+    <?php else: ?>
+    <label>&nbsp;( ) .csv</label> <small>(to export as csv - go to 'show tables' and export just ONE table)</small>
+    <?php endif; ?>
+    </div>
+    <br>
+    <div><label><input type="checkbox" name="sp" value="1"> import has super privileges</label></div>
+    <div><label><input type="checkbox" name="gz" value="1"> compress as .gz</label></div>
+    <div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
+    <input type="hidden" name="doex" value="1">
+    <input type="hidden" name="rt" value="<?= hs($data['table_name']) ?>">
+    <button type="submit" class="btn btn-primary">⬇️ Download</button>
+    <button type="submit" name="issrv" class="btn btn-secondary">💾 Dump on Server</button>
+    <button type="button" class="btn btn-ghost" onclick="window.location='<?= hs($data['self_url'].'?'.$data['xurl'].'&db='.ue($data['database'])."&srv=".ue($data['server'])) ?>'">❌ Cancel</button>
+    </div>
+    <p><small>"Dump on Server" exports to file:<br><?= hs($data['dump_file']) ?></small></p>
+    </div>
+    </center>
+    <?php return ob_get_clean();
+}
+
+function tpl_import_form($data) {
+    ob_start(); ?>
+    <center>
+    <h3>Import DB</h3>
+    <div class="frm">
+    <div><label><input type="radio" name="it" value="" checked> import by uploading <b>.sql</b> or <b>.gz</b> file:</label>
+     <input type="file" name="file1" value="" size=40><br>
+    </div>
+    <div><label><input type="radio" name="it" value="sql"> import from file on server:<br>
+     <?= hs($data['dump_file_sql']) ?></label></div>
+    <div><label><input type="radio" name="it" value="gz"> import from file on server:<br>
+     <?= hs($data['dump_file_gz']) ?></label></div>
+    <input type="hidden" name="doim" value="1">
+    <div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
+    <button type="submit" class="btn btn-primary" onclick="return ays()">⬆️ Import</button>
+    <button type="button" class="btn btn-secondary" onclick="window.location='<?= hs($data['self_url'].'?'.$data['xurl'].'&db='.ue($data['database'])."&srv=".ue($data['server'])) ?>'">❌ Cancel</button>
+    </div>
+    </div>
+    </center>
     <?php return ob_get_clean();
 }
 
@@ -2167,36 +2309,21 @@ function loadsess(){
 function print_export(){
  global $self,$xurl,$SRV,$DB,$DUMP_FILE;
  $t=$_REQUEST['rt'];
- $l=($t)?"Table $t":"whole DB";
+ 
  print_header();
-?>
-<center>
-<h3>Export <?php eo($l)?></h3>
-<div class="frm">
-<input type="checkbox" name="s" value="1" checked> Structure<br>
-<input type="checkbox" name="d" value="1" checked> Data<br><br>
-<div><label><input type="radio" name="et" value="" checked> .sql</label>&nbsp;</div>
-<div>
-<?php if ($t && !strpos($t,',')){?>
- <label><input type="radio" name="et" value="csv"> .csv (Excel style, data only and for one table only)</label>
-<?php }else{?>
-<label>&nbsp;( ) .csv</label> <small>(to export as csv - go to 'show tables' and export just ONE table)</small>
-<?php }?>
-</div>
-<br>
-<div><label><input type="checkbox" name="sp" value="1"> import has super privileges</label></div>
-<div><label><input type="checkbox" name="gz" value="1"> compress as .gz</label></div>
-<div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
-<input type="hidden" name="doex" value="1">
-<input type="hidden" name="rt" value="<?php eo($t)?>">
-<button type="submit" class="btn btn-primary">⬇️ Download</button>
-<button type="submit" name="issrv" class="btn btn-secondary">💾 Dump on Server</button>
-<button type="button" class="btn btn-ghost" onclick="window.location='<?php eo($self.'?'.$xurl.'&db='.ue($DB['db'])."&srv=".ue($SRV))?>'">❌ Cancel</button>
-</div>
-<p><small>"Dump on Server" exports to file:<br><?php eo(export_fname($DUMP_FILE).'.sql')?></small></p>
-</div>
-</center>
-<?php
+ 
+ $template_data = [
+     'export_label' => ($t) ? "Table $t" : "whole DB",
+     'table_name' => $t,
+     'self_url' => $self,
+     'xurl' => $xurl,
+     'database' => $DB['db'],
+     'server' => $SRV,
+     'dump_file' => export_fname($DUMP_FILE).'.sql',
+     'show_csv_option' => $t && !strpos($t,',')
+ ];
+ 
+ echo render_template('export_form', $template_data);
  print_footer();
  exit;
 }
@@ -2335,54 +2462,19 @@ function ex_end(){
 
 function print_import(){
  global $self,$xurl,$SRV,$DB,$DUMP_FILE;
+ 
  print_header();
-?>
-<center>
-<h3>Import DB</h3>
-<div class="frm">
-<div><label><input type="radio" name="it" value="" checked> import by uploading <b>.sql</b> or <b>.gz</b> file:</label>
- <input type="file" name="file1" value="" size=40><br>
-</div>
-<div><label><input type="radio" name="it" value="sql"> import from file on server:<br>
- <?php eo($DUMP_FILE.'.sql')?></label></div>
-<div><label><input type="radio" name="it" value="gz"> import from file on server:<br>
- <?php eo($DUMP_FILE.'.sql.gz')?></label></div>
-<input type="hidden" name="doim" value="1">
-<div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
-<button type="submit" class="btn btn-primary" onclick="return ays()">⬆️ Import</button>
-<button type="button" class="btn btn-secondary" onclick="window.location='<?php eo($self.'?'.$xurl.'&db='.ue($DB['db'])."&srv=".ue($SRV))?>'">❌ Cancel</button>
-</div>
-</div>
-<br><br><br>
-<!--
-<h3>Import one Table from CSV</h3>
-<div class="frm">
-.csv file (Excel style): <input type="file" name="file2" value="" size=40><br>
-<input type="checkbox" name="r1" value="1" checked> first row contain field names<br>
-<small>(note: for success, field names should be exactly the same as in DB)</small><br>
-Character set of the file: <select name="chset"><?php echo chset_select('utf8mb4')?></select>
-<br><br>
-Import into:<br>
-<input type="radio" name="tt" value="1" checked="checked"> existing table:
- <select name="t">
- <option value=''>- select -</option>
- <?php echo sel(db_array('show tables',NULL,0,1), 0, ''); ?>
-</select>
-<div style="margin-left:20px">
- <input type="checkbox" name="ttr" value="1"> replace existing DB data<br>
- <input type="checkbox" name="tti" value="1"> ignore duplicate rows
-</div>
-<input type="radio" name="tt" value="2"> create new table with name <input type="text" name="tn" value="" size="20">
-<br><br>
-<input type="hidden" name="doimcsv" value="1">
-<div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
-<button type="submit" class="btn btn-primary" onclick="return ays()">📤 Upload and Import</button>
-<button type="button" class="btn btn-secondary" onclick="window.location='<?php eo($self)?>'">❌ Cancel</button>
-</div>
-</div>
--->
-</center>
-<?php
+ 
+ $template_data = [
+     'self_url' => $self,
+     'xurl' => $xurl,
+     'database' => $DB['db'],
+     'server' => $SRV,
+     'dump_file_sql' => $DUMP_FILE.'.sql',
+     'dump_file_gz' => $DUMP_FILE.'.sql.gz'
+ ];
+ 
+ echo render_template('import_form', $template_data);
  print_footer();
  exit;
 }
