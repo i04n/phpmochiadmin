@@ -116,8 +116,8 @@ if (isset($_REQUEST['showcfg'])) {
 //get initial values
 $SQLq = trim(b64d($_REQUEST['q'] ?? ''));
 $page = intval($_REQUEST['p'] ?? 0);
-$isRefresh = intval($_REQUEST['refresh'] ?? 0);
-if ($isRefresh && $DB['db'] && preg_match('/^show/', $SQLq)) {
+$is_refresh = intval($_REQUEST['refresh'] ?? 0);
+if ($is_refresh && $DB['db'] && preg_match('/^show/', $SQLq)) {
     $SQLq = $SHOW_T;
 }
 
@@ -125,10 +125,12 @@ if (db_connect('nodie')) {
     $time_start = microtime_float();
 
     // Functional router - clean and simple
-    $response = route_request($_REQUEST, $DB, $SQLq, $isRefresh);
+    $response = route_request($_REQUEST, $DB, $SQLq, $is_refresh);
 
     $time_all = ceil((microtime_float() - $time_start) * 10000) / 10000;
-    print_screen();
+    
+    // Handle router response properly
+    handle_router_response($response);
 } else {
     print_cfg();
 }
@@ -140,7 +142,7 @@ if (db_connect('nodie')) {
 /**
  * Main router - determines which handler to call based on request
  */
-function route_request($request, $db, $sql_query, $is_refresh)
+function route_request($request, $db, $SQLq, $is_refresh)
 {
     // Define routes with their conditions and handlers (PHP 7.0+ compatible)
     $routes = [
@@ -160,7 +162,7 @@ function route_request($request, $db, $sql_query, $is_refresh)
 
         // Check if condition matches (null means fallback route)
         if ($condition_key === null || isset($request[$condition_key])) {
-            return call_user_func($route['handler'], $request, $db, $sql_query, $is_refresh);
+            return call_user_func($route['handler']);
         }
     }
 
@@ -170,7 +172,7 @@ function route_request($request, $db, $sql_query, $is_refresh)
 /**
  * Route handlers - clean, functional, single responsibility
  */
-function handle_phpinfo($request, $db, $sql_query, $is_refresh)
+function handle_phpinfo()
 {
     global $sqldr;
     ob_start();
@@ -181,88 +183,91 @@ function handle_phpinfo($request, $db, $sql_query, $is_refresh)
     return ['status' => 'success', 'type' => 'phpinfo'];
 }
 
-function handle_export_show($request, $db, $sql_query, $is_refresh)
+function handle_export_show()
 {
-    if (!$db['db']) {
-        return handle_no_database($request, $db, $sql_query, $is_refresh);
+    global $DB;
+    if (!$DB['db']) {
+        return handle_no_database();
     }
     print_export();
     return ['status' => 'success', 'type' => 'export_show'];
 }
 
-function handle_export_do($request, $db, $sql_query, $is_refresh)
+function handle_export_do()
 {
-    if (!$db['db']) {
-        return handle_no_database($request, $db, $sql_query, $is_refresh);
+    global $DB;
+    if (!$DB['db']) {
+        return handle_no_database();
     }
     check_xss();
     do_export();
     return ['status' => 'success', 'type' => 'export_do'];
 }
 
-function handle_import_show($request, $db, $sql_query, $is_refresh)
+function handle_import_show()
 {
-    if (!$db['db']) {
-        return handle_no_database($request, $db, $sql_query, $is_refresh);
+    global $DB;
+    if (!$DB['db']) {
+        return handle_no_database();
     }
     print_import();
     return ['status' => 'success', 'type' => 'import_show'];
 }
 
-function handle_import_do($request, $db, $sql_query, $is_refresh)
+function handle_import_do()
 {
-    if (!$db['db']) {
-        return handle_no_database($request, $db, $sql_query, $is_refresh);
+    global $DB;
+    if (!$DB['db']) {
+        return handle_no_database();
     }
     check_xss();
     do_import();
     return ['status' => 'success', 'type' => 'import_do'];
 }
 
-function handle_show_tables($request, $db, $sql_query, $is_refresh)
+function handle_show_tables()
 {
-    if (!$db['db']) {
-        return handle_no_database($request, $db, $sql_query, $is_refresh);
+    global $DB;
+    if (!$DB['db']) {
+        return handle_no_database();
     }
     check_xss();
     do_sht();
     return ['status' => 'success', 'type' => 'show_tables'];
 }
 
-function handle_create_database($request, $db, $sql_query, $is_refresh)
+function handle_create_database()
 {
-    global $err_msg, $SHOW_D;
+    global $SHOW_D;
 
     check_xss();
-    $new_db = trim($request['new_db'] ?? '');
+    $new_db = trim($_REQUEST['new_db'] ?? '');
     $validation = validate_database_name($new_db);
 
     if (!$validation['valid']) {
-        $err_msg = $validation['error'];
         return ['status' => 'error', 'message' => $validation['error']];
     }
 
     try {
         do_sql('CREATE DATABASE ' . dbqid($new_db));
         do_sql($SHOW_D);
-        return ['status' => 'success', 'type' => 'create_database'];
+        return ['status' => 'success', 'type' => 'create_database', 'message' => 'Database created successfully'];
     } catch (Exception $e) {
-        $err_msg = "Invalid database name: " . htmlspecialchars($new_db);
-        return ['status' => 'error', 'message' => $err_msg];
+        return ['status' => 'error', 'message' => "Invalid database name: " . htmlspecialchars($new_db)];
     }
 }
 
-function handle_sql_query($request, $db, $sql_query, $is_refresh)
+function handle_sql_query()
 {
-    global $err_msg, $SHOW_D;
+    global $err_msg, $SHOW_D, $DB, $SQLq, $is_refresh;
 
-    if ($db['db']) {
+    if ($DB['db']) {
         // Database selected - handle SQL queries
-        if (!$is_refresh || preg_match('/^select|with|show|explain|desc/i', $sql_query)) {
-            if ($sql_query) {
+        if (!$is_refresh || preg_match('/^select|with|show|explain|desc/i', $SQLq)) {
+            if ($SQLq) {
                 check_xss();
             }
-            do_sql($sql_query);
+            do_sql($SQLq);
             return ['status' => 'success', 'type' => 'sql_query'];
         }
     } else {
@@ -271,34 +276,68 @@ function handle_sql_query($request, $db, $sql_query, $is_refresh)
             check_xss();
             do_sql($SHOW_D);
             return ['status' => 'success', 'type' => 'show_databases'];
-        } elseif (preg_match('/^(?:show\s+(?:databases|status|variables|process)|create\s+database|grant\s+)/i', $sql_query)) {
+        } elseif (preg_match('/^(?:show\s+(?:databases|status|variables|process)|create\s+database|grant\s+)/i', $SQLq)) {
             check_xss();
-            $validation = validate_sql_query($sql_query);
+            $validation = validate_sql_query($SQLq);
 
             if (!$validation['valid']) {
-                $err_msg = $validation['error'];
                 return ['status' => 'error', 'message' => $validation['error']];
             }
 
-            do_sql($sql_query);
+            do_sql($SQLq);
             return ['status' => 'success', 'type' => 'sql_query'];
         } else {
-            $err_msg = "Select Database first";
-            if (!$sql_query) {
+            if (!$SQLq) {
                 do_sql($SHOW_D);
             }
-            return ['status' => 'error', 'message' => 'No database selected'];
+            return ['status' => 'error', 'message' => 'Select Database first'];
         }
     }
 
     return ['status' => 'success', 'type' => 'default'];
 }
 
-function handle_no_database($request, $db, $sql_query, $is_refresh)
+function handle_no_database()
 {
     global $err_msg;
     $err_msg = "Select Database first";
     return ['status' => 'error', 'message' => 'No database selected'];
+}
+
+/**
+ * Handle router response properly - completing functional migration
+ * Standardized error handling strategy
+ */
+function handle_router_response($response) {
+    global $err_msg, $out_message;
+    
+    // Unified error handling strategy
+    if ($response['status'] === 'error') {
+        set_error_message($response['message'] ?? 'Unknown error');
+    } elseif ($response['status'] === 'success' && isset($response['message'])) {
+        set_success_message($response['message']);
+    }
+    
+    // Always print screen at the end
+    print_screen();
+}
+
+/**
+ * Unified error message handling
+ */
+function set_error_message($message) {
+    global $err_msg, $out_message;
+    $err_msg = $message;
+    $out_message = ''; // Clear success message
+}
+
+/**
+ * Unified success message handling
+ */
+function set_success_message($message) {
+    global $err_msg, $out_message;
+    $out_message = $message;
+    $err_msg = ''; // Clear error message
 }
 
 function print_screen()
@@ -327,13 +366,26 @@ function print_screen()
 
 function print_footer()
 {
-    echo tpl_footer();
+    $template_data = collect_footer_data();
+    echo render_template('footer', $template_data);
+}
+
+function collect_footer_data() {
+    return [
+        'version' => 'phpMochiAdmin 2.0',
+        'year' => date('Y')
+    ];
 }
 
 function do_sql($q)
 {
-    global $dbh,$last_sth,$last_sql,$reccount,$out_message,$SQLq,$SHOW_T,$DB;
+    global $dbh,$last_sth,$last_sql,$reccount,$out_message,$SQLq,$SHOW_T,$DB,$sqldr,$err_msg;
+    
+    // Initialize for functional consistency
     $SQLq = $q;
+    $last_sql = $q;
+    $reccount = -1;
+    $out_message = $sqldr = "";
 
     $is_shts = 0;
     if ($q == $SHOW_T) {
@@ -1752,7 +1804,7 @@ function tpl_javascript()
      e.style.display=e.style.display=='none'?'':'none';
     }
     function qtpl(s){
-     $('qraw').value=s.replace(/%T/g,"`<?php eo(($_REQUEST['t'] ?? 0) ? b64d($_REQUEST['t']) : 'tablename')?>`");
+     $('qraw').value=s.replace(/%T/g,"`<?php hs(($_REQUEST['t'] ?? 0) ? b64d($_REQUEST['t']) : 'tablename')?>`");
     }
     function smview(){
      if ($('is_sm').checked){$('res').className+=' sm'} else {$('res').className = $('res').className.replace(/\bsm\b/,' ')}
@@ -3051,9 +3103,7 @@ function hs($s)
 {
     return htmlspecialchars(is_null($s) ? '' : $s, ENT_QUOTES, 'UTF-8');
 }
-function eo($s) //echo+escape
-{echo hs($s);
-}
+// Duplicate function removed - this was eo() functionality merged into hs()
 function ue($s)
 {
     return urlencode($s);
