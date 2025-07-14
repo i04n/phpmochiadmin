@@ -114,7 +114,7 @@ if (isset($_REQUEST['showcfg'])) {
 }
 
 //get initial values
-$SQLq = trim(b64d($_REQUEST['q'] ?? ''));
+$SQLq = trim(base64_decode($_REQUEST['q'] ?? ''));
 $page = intval($_REQUEST['p'] ?? 0);
 $is_refresh = intval($_REQUEST['refresh'] ?? 0);
 if ($is_refresh && $DB['db'] && preg_match('/^show/', $SQLq)) {
@@ -122,12 +122,12 @@ if ($is_refresh && $DB['db'] && preg_match('/^show/', $SQLq)) {
 }
 
 if (db_connect('nodie')) {
-    $time_start = microtime_float();
+    $time_start = microtime(true);
 
     // Functional router - clean and simple
     $response = route_request($_REQUEST, $DB, $SQLq, $is_refresh);
 
-    $time_all = ceil((microtime_float() - $time_start) * 10000) / 10000;
+    $time_all = ceil((microtime(true) - $time_start) * 10000) / 10000;
     
     // Handle router response properly
     handle_router_response($response);
@@ -444,8 +444,8 @@ function display_select($sth, $q)
     // Create configuration object
     $config = [
         'xurl' => $xurl,
-        'db' => ue($DB['db']),
-        'srv' => ue($SRV),
+        'db' => urlencode($DB['db']),
+        'srv' => urlencode($SRV),
         'is_sm' => $is_sm
     ];
 
@@ -538,8 +538,8 @@ function render_show_tables_row($row, $config, $fields_num)
 {
     $table_name = $row[0];
     $table_quoted = dbqid($table_name);
-    $url = "?{$config['xurl']}&db={$config['db']}&srv={$config['srv']}&t=" . b64u($table_name);
-    $table_url = $url . "&q=" . b64u("select * from {$table_quoted}");
+    $url = "?{$config['xurl']}&db={$config['db']}&srv={$config['srv']}&t=" . urlencode(base64_encode($table_name));
+    $table_url = $url . "&q=" . urlencode(base64_encode("select * from {$table_quoted}"));
 
     $template_data = [
         'table_quoted' => $table_quoted,
@@ -560,8 +560,8 @@ function render_show_databases_row($row, $config)
 {
     $db_name = $row[0];
     $db_quoted = dbqid($db_name);
-    $url = "?{$config['xurl']}&db=" . ue($db_name) . "&srv={$config['srv']}";
-    $db_url = $url . "&q=" . b64u("SHOW TABLE STATUS");
+    $url = "?{$config['xurl']}&db=" . urlencode($db_name) . "&srv={$config['srv']}";
+    $db_url = $url . "&q=" . urlencode(base64_encode("SHOW TABLE STATUS"));
 
     $template_data = [
         'db_name' => $db_name,
@@ -577,7 +577,7 @@ function render_regular_row($row, $fields_num, $is_show_create)
     $cells = [];
 
     for ($i = 0; $i < $fields_num; $i++) {
-        $cells[] = format_cell_value($row[$i], $is_show_create);
+        $cells[] = format_cell_valurlencode($row[$i], $is_show_create);
     }
 
     $template_data = [
@@ -611,8 +611,6 @@ function print_header()
 
     echo render_template('layout_start', $template_data);
 }
-
-
 function print_login()
 {
     global $err_msg;
@@ -624,8 +622,6 @@ function print_login()
 
     echo render_template('login', $template_data);
 }
-
-
 function print_cfg()
 {
     global $DB, $err_msg, $self;
@@ -650,8 +646,6 @@ function print_cfg()
     // Use print_footer
     print_footer();
 }
-
-
 // Pure validation functions for better security and maintainability
 function validate_database_name($name)
 {
@@ -1033,8 +1027,8 @@ function tpl_database_navigation($data)
         </select>
     <?php endif; ?>
 
-    <a href="?<?= hs($data['xurl'] ?? '') ?>&db=<?= ue($data['db'] ?? '') ?>&srv=<?= ue($data['current_server'] ?? '') ?>&q=<?= b64u("show processlist") ?>">⚡ Processes</a>
-    <a href="?<?= hs($data['xurl'] ?? '') ?>&q=<?= b64u("show databases") ?>">🗂️ Databases</a>
+    <a href="?<?= hs($data['xurl'] ?? '') ?>&db=<?= urlencode($data['db'] ?? '') ?>&srv=<?= urlencode($data['current_server'] ?? '') ?>&q=<?= urlencode(base64_encode("show processlist")) ?>">⚡ Processes</a>
+    <a href="?<?= hs($data['xurl'] ?? '') ?>&q=<?= urlencode(base64_encode("show databases")) ?>">🗂️ Databases</a>
 
     <select name="db" onChange="frefresh()" class="nav-select">
         <option value='*'> - select/refresh -</option>
@@ -1043,8 +1037,8 @@ function tpl_database_navigation($data)
     </select>
 
     <?php if ($data['db'] ?? ''): ?>
-        <?php $base_url = "href='" . hs($data['self'] ?? '') . "?" . hs($data['xurl'] ?? '') . "&db=" . ue($data['db']) . "&srv=" . ue($data['current_server'] ?? ''); ?>
-        <a <?= $base_url ?>&q=<?= b64u($data['show_tables'] ?? '') ?>'">📋 Tables</a>
+        <?php $base_url = "href='" . hs($data['self'] ?? '') . "?" . hs($data['xurl'] ?? '') . "&db=" . urlencode($data['db']) . "&srv=" . urlencode($data['current_server'] ?? ''); ?>
+        <a <?= $base_url ?>&q=<?= urlencode(base64_encode($data['show_tables'] ?? '')) ?>'">📋 Tables</a>
         <a <?= $base_url ?>&shex=1'">📊 Export</a>
         <a <?= $base_url ?>&shim=1'">📤 Import</a>
     <?php endif; ?>
@@ -1110,7 +1104,7 @@ function tpl_export_form($data)
     <input type="hidden" name="rt" value="<?= hs($data['table_name']) ?>">
     <button type="submit" class="btn btn-primary">⬇️ Download</button>
     <button type="submit" name="issrv" class="btn btn-secondary">💾 Dump on Server</button>
-    <button type="button" class="btn btn-ghost" onclick="window.location='<?= hs($data['self_url'].'?'.$data['xurl'].'&db='.ue($data['database'])."&srv=".ue($data['server'])) ?>'">❌ Cancel</button>
+    <button type="button" class="btn btn-ghost" onclick="window.location='<?= hs($data['self_url'].'?'.$data['xurl'].'&db='.urlencode($data['database'])."&srv=".urlencode($data['server'])) ?>'">❌ Cancel</button>
     </div>
     <p><small>"Dump on Server" exports to file:<br><?= hs($data['dump_file']) ?></small></p>
     </div>
@@ -1134,7 +1128,7 @@ function tpl_import_form($data)
     <input type="hidden" name="doim" value="1">
     <div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
     <button type="submit" class="btn btn-primary" onclick="return ays()">⬆️ Import</button>
-    <button type="button" class="btn btn-secondary" onclick="window.location='<?= hs($data['self_url'].'?'.$data['xurl'].'&db='.ue($data['database'])."&srv=".ue($data['server'])) ?>'">❌ Cancel</button>
+    <button type="button" class="btn btn-secondary" onclick="window.location='<?= hs($data['self_url'].'?'.$data['xurl'].'&db='.urlencode($data['database'])."&srv=".urlencode($data['server'])) ?>'">❌ Cancel</button>
     </div>
     </div>
     </center>
@@ -1804,7 +1798,7 @@ function tpl_javascript()
      e.style.display=e.style.display=='none'?'':'none';
     }
     function qtpl(s){
-     $('qraw').value=s.replace(/%T/g,"`<?php hs(($_REQUEST['t'] ?? 0) ? b64d($_REQUEST['t']) : 'tablename')?>`");
+     $('qraw').value=s.replace(/%T/g,"`<?php hs(($_REQUEST['t'] ?? 0) ? base64_decode($_REQUEST['t']) : 'tablename')?>`");
     }
     function smview(){
      if ($('is_sm').checked){$('res').className+=' sm'} else {$('res').className = $('res').className.replace(/\bsm\b/,' ')}
@@ -1941,7 +1935,7 @@ function detect_query_type($query)
     ];
 }
 
-function format_cell_value($value, $is_show_create = false)
+function format_cell_valurlencode($value, $is_show_create = false)
 {
     if (is_null($value)) {
         return "<i>NULL</i>";
@@ -1973,7 +1967,7 @@ function create_table_action_link($url, $query, $text, $confirm = false)
 {
     $template_data = [
         'url' => $url,
-        'encoded_query' => b64u($query),
+        'encoded_query' => urlencode(base64_encode($query)),
         'text' => $text,
         'onclick' => $confirm ? " onclick='return ays()'" : ""
     ];
@@ -1985,7 +1979,7 @@ function create_export_link($url, $table_name)
 {
     $template_data = [
         'url' => $url,
-        'table_name_encoded' => ue($table_name)
+        'table_name_encoded' => urlencode($table_name)
     ];
 
     return render_template('export_link', $template_data);
@@ -2010,9 +2004,9 @@ function render_table_row_actions($url, $table_name, $table_quoted)
 function render_database_row_actions($url, $db_name, $db_quoted)
 {
     return [
-        "<a href=\"{$url}&q=" . b64u("show create database {$db_quoted}") . "\">scd</a>",
-        "<a href=\"{$url}&q=" . b64u("show table status") . "\">status</a>",
-        "<a href=\"{$url}&q=" . b64u("show triggers") . "\">trig</a>"
+        "<a href=\"{$url}&q=" . urlencode(base64_encode("show create database {$db_quoted}")) . "\">scd</a>",
+        "<a href=\"{$url}&q=" . urlencode(base64_encode("show table status")) . "\">status</a>",
+        "<a href=\"{$url}&q=" . urlencode(base64_encode("show triggers")) . "\">trig</a>"
     ];
 }
 
@@ -2058,9 +2052,9 @@ function create_info_card($query_type, $config)
     $base_url = "?{$config['xurl']}&db={$config['db']}&srv={$config['srv']}";
 
     $links = [
-        ['url' => $base_url . "&q=" . b64u("show variables"), 'icon' => '⚙️', 'text' => 'Configuration Variables'],
-        ['url' => $base_url . "&q=" . b64u("show status"), 'icon' => '📊', 'text' => 'Statistics'],
-        ['url' => $base_url . "&q=" . b64u("show processlist"), 'icon' => '⚡', 'text' => 'Process List']
+        ['url' => $base_url . "&q=" . urlencode(base64_encode("show variables")), 'icon' => '⚙️', 'text' => 'Configuration Variables'],
+        ['url' => $base_url . "&q=" . urlencode(base64_encode("show status")), 'icon' => '📊', 'text' => 'Statistics'],
+        ['url' => $base_url . "&q=" . urlencode(base64_encode("show processlist")), 'icon' => '⚡', 'text' => 'Process List']
     ];
 
     $database_info = null;
@@ -2322,7 +2316,7 @@ function db_row($sql)
     return mysqli_fetch_assoc($sth);
 }
 
-function db_value($sql, $dbh1 = null, $skiperr = 0)
+function db_valurlencode($sql, $dbh1 = null, $skiperr = 0)
 {
     $sth = db_query($sql, $dbh1, $skiperr);
     if (!$sth) {
@@ -2382,11 +2376,6 @@ function sel($arr, $n, $sel = '')
     }, '');
 }
 
-function microtime_float()
-{
-    list($usec, $sec) = explode(" ", microtime());
-    return ((float)$usec + (float)$sec);
-}
 
 /* page nav
  $pg=int($_[0]);     #current page
@@ -2980,7 +2969,7 @@ function do_one_sql($sql)
             if ($IS_COUNT) {
                 #get total count
                 $sql1 = 'select count(*) from ('.$sql.') ___count_table';
-                $last_count = db_value($sql1, null, 'noerr');
+                $last_count = db_valurlencode($sql1, null, 'noerr');
             }
             $offset = $page * $MAX_ROWS_PER_PAGE;
             $sql .= " LIMIT $offset,$MAX_ROWS_PER_PAGE";
@@ -3104,23 +3093,7 @@ function hs($s)
     return htmlspecialchars(is_null($s) ? '' : $s, ENT_QUOTES, 'UTF-8');
 }
 // Duplicate function removed - this was eo() functionality merged into hs()
-function ue($s)
-{
-    return urlencode($s);
-}
 
-function b64e($s)
-{
-    return base64_encode($s);
-}
-function b64u($s)
-{
-    return ue(base64_encode($s));
-}
-function b64d($s)
-{
-    return base64_decode($s ?? '');
-}
 
 function isTrusted()
 {
